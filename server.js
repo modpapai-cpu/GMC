@@ -513,8 +513,8 @@ app.post("/api/contact", async (req, res) => {
             to: ADMIN_EMAIL,
             replyTo: email,
             subject: `[GMC Contact] ${subject}`,
-            text: `New contact message from GMC website\n\nName: ${name}\nEmail: ${email}\nContact No.: ${phone || "Not provided"}\nSubject: ${subject}\n\nMessage:\n${message}`,
-            html: `<!doctype html>
+            textPart: `New contact message from GMC website\n\nName: ${name}\nEmail: ${email}\nContact No.: ${phone || "Not provided"}\nSubject: ${subject}\n\nMessage:\n${message}`,
+            htmlPart: `<!doctype html>
 <html>
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
 <body style="margin:0;padding:0;background:#070707;font-family:Arial,Helvetica,sans-serif;color:#f5f5f5;">
