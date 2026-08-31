@@ -1,5 +1,4 @@
 const express = require("express");
-const nodemailer = require("nodemailer");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
@@ -131,31 +130,47 @@ function getRole(email) {
     return isSuperAdmin(email) ? "super" : "admin";
 }
 
-const transporter = nodemailer.createTransport({
-    host: "smtp.gmail.com",
-    port: 465,
-    secure: true,
-    auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS
-    },
-    connectionTimeout: 15000,
-    greetingTimeout: 15000,
-    socketTimeout: 15000
-});
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
+const MAIL_FROM = process.env.MAIL_FROM || "GMC Admin <onboarding@resend.dev>";
+
+async function sendEmail({ to, subject, text, html, replyTo }) {
+    if (!RESEND_API_KEY) {
+        throw new Error("RESEND_API_KEY is not configured.");
+    }
+
+    const payload = {
+        from: MAIL_FROM,
+        to: Array.isArray(to) ? to : [to],
+        subject,
+        text,
+        html
+    };
+
+    if (replyTo) payload.reply_to = replyTo;
+
+    const response = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+            "Authorization": `Bearer ${RESEND_API_KEY}`,
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+    });
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+        throw new Error(data?.message || data?.error || `Resend request failed (${response.status}).`);
+    }
+
+    return data;
+}
 
 console.log("================================");
 console.log("GMC ADMIN SERVER");
 console.log("================================");
-console.log("SMTP USER:", process.env.SMTP_USER || "NOT SET");
-console.log("SMTP PASSWORD:", process.env.SMTP_PASS ? "SET" : "NOT SET");
-
-if (process.env.SMTP_USER && process.env.SMTP_PASS) {
-    transporter.verify(error => {
-        if (error) console.error("SMTP CONNECTION FAILED:", error.message);
-        else console.log("SMTP CONNECTION SUCCESS");
-    });
-}
+console.log("RESEND API KEY:", RESEND_API_KEY ? "SET" : "NOT SET");
+console.log("MAIL FROM:", MAIL_FROM);
 
 /* OTP */
 app.post("/api/send-otp", async (req, res) => {
@@ -163,7 +178,7 @@ app.post("/api/send-otp", async (req, res) => {
     console.log("OTP REQUEST:", email);
 
     if (!email || !isAllowedAdmin(email)) return res.status(403).json({ message: "This email is not authorized for admin access." });
-    if (!process.env.SMTP_USER || !process.env.SMTP_PASS) return res.status(500).json({ message: "SMTP is not configured." });
+    if (!RESEND_API_KEY) return res.status(500).json({ message: "Email service is not configured." });
 
     const otp = crypto.randomInt(100000, 1000000).toString();
     otpData = {
@@ -176,11 +191,12 @@ app.post("/api/send-otp", async (req, res) => {
     const roleName = getRole(email) === "super" ? "Super Admin" : "Admin";
 
     try {
-        await transporter.sendMail({
-            from: `"GMC Admin" <${process.env.SMTP_USER}>`,
+        await sendEmail({
             to: email,
             subject: "GMC Admin Login OTP",
-            text: `Your GMC ${roleName} verification code is: ${otp}\n\nThis OTP expires in 5 minutes. If you did not request this code, ignore this email.`,
+            text: `Your GMC ${roleName} verification code is: ${otp}
+
+This OTP expires in 5 minutes. If you did not request this code, ignore this email.`,
             html: `<div style="font-family:Arial,sans-serif;background:#080808;color:#fff;padding:30px"><div style="max-width:500px;margin:auto;border:1px solid #ff2222;border-radius:14px;padding:28px;background:#0d0d0d"><h2 style="color:#ff2222;margin-top:0">GMC ADMIN</h2><p>Your ${roleName} verification code is:</p><div style="font-size:34px;font-weight:900;letter-spacing:8px;color:#fff;background:#151515;border:1px solid #333;border-radius:10px;padding:16px;text-align:center">${otp}</div><p style="color:#999">This OTP expires in 5 minutes and can only be used once.</p></div></div>`
         });
         console.log("OTP EMAIL SENT TO:", email);
@@ -188,7 +204,7 @@ app.post("/api/send-otp", async (req, res) => {
     } catch (error) {
         otpData = null;
         console.error("EMAIL SEND FAILED:", error);
-        return res.status(500).json({ message: "Failed to send OTP. Check Gmail SMTP settings." });
+        return res.status(500).json({ message: "Failed to send OTP. Please check Resend configuration." });
     }
 });
 
@@ -463,8 +479,7 @@ app.post("/api/contact", async (req, res) => {
     if (!process.env.SMTP_USER || !process.env.SMTP_PASS) return res.status(500).json({ message: "Email service is not configured." });
 
     try {
-        await transporter.sendMail({
-            from: `"GMC Website" <${process.env.SMTP_USER}>`,
+        await sendEmail({
             to: ADMIN_EMAIL,
             replyTo: email,
             subject: `[GMC Contact] ${subject}`,
