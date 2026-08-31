@@ -130,46 +130,74 @@ function getRole(email) {
     return isSuperAdmin(email) ? "super" : "admin";
 }
 
-const RESEND_API_KEY = process.env.RESEND_API_KEY;
-const MAIL_FROM = process.env.MAIL_FROM || "GMC Admin <onboarding@resend.dev>";
+const MAILJET_API_KEY = process.env.MAILJET_API_KEY || "";
+const MAILJET_SECRET_KEY = process.env.MAILJET_SECRET_KEY || "";
+const MAIL_FROM = process.env.MAIL_FROM || "modpapai@gmail.com";
 
-async function sendEmail({ to, subject, text, html, replyTo }) {
-    if (!RESEND_API_KEY) {
-        throw new Error("RESEND_API_KEY is not configured.");
+async function sendEmail({ to, subject, textPart, htmlPart, replyTo }) {
+    if (!MAILJET_API_KEY || !MAILJET_SECRET_KEY) {
+        throw new Error("Mailjet API credentials are not configured.");
     }
 
     const payload = {
-        from: MAIL_FROM,
-        to: Array.isArray(to) ? to : [to],
-        subject,
-        text,
-        html
+        Messages: [{
+            From: {
+                Email: MAIL_FROM,
+                Name: "GMC Website"
+            },
+            To: [{
+                Email: to
+            }],
+            Subject: subject,
+            TextPart: textPart,
+            HTMLPart: htmlPart
+        }]
     };
 
-    if (replyTo) payload.reply_to = replyTo;
+    if (replyTo) {
+        payload.Messages[0].ReplyTo = {
+            Email: replyTo
+        };
+    }
 
-    const response = await fetch("https://api.resend.com/emails", {
+    const auth = Buffer
+        .from(`${MAILJET_API_KEY}:${MAILJET_SECRET_KEY}`)
+        .toString("base64");
+
+    const response = await fetch("https://api.mailjet.com/v3.1/send", {
         method: "POST",
         headers: {
-            "Authorization": `Bearer ${RESEND_API_KEY}`,
+            "Authorization": `Basic ${auth}`,
             "Content-Type": "application/json"
         },
         body: JSON.stringify(payload)
     });
 
-    const data = await response.json().catch(() => ({}));
+    const body = await response.text();
 
     if (!response.ok) {
-        throw new Error(data?.message || data?.error || `Resend request failed (${response.status}).`);
+        throw new Error(`Mailjet API ${response.status}: ${body}`);
     }
 
-    return data;
+    let result;
+    try {
+        result = JSON.parse(body);
+    } catch {
+        throw new Error("Mailjet returned an invalid response.");
+    }
+
+    const messageStatus = result?.Messages?.[0]?.Status;
+    if (messageStatus && messageStatus.toLowerCase() !== "success") {
+        throw new Error(`Mailjet rejected the message: ${body}`);
+    }
+
+    return result;
 }
 
 console.log("================================");
 console.log("GMC ADMIN SERVER");
 console.log("================================");
-console.log("RESEND API KEY:", RESEND_API_KEY ? "SET" : "NOT SET");
+console.log("MAILJET API KEY:", MAILJET_API_KEY ? "SET" : "NOT SET");
 console.log("MAIL FROM:", MAIL_FROM);
 
 /* OTP */
@@ -178,7 +206,9 @@ app.post("/api/send-otp", async (req, res) => {
     console.log("OTP REQUEST:", email);
 
     if (!email || !isAllowedAdmin(email)) return res.status(403).json({ message: "This email is not authorized for admin access." });
-    if (!RESEND_API_KEY) return res.status(500).json({ message: "Email service is not configured." });
+    if (!MAILJET_API_KEY || !MAILJET_SECRET_KEY) {
+        return res.status(500).json({ message: "Mailjet email service is not configured." });
+    }
 
     const otp = crypto.randomInt(100000, 1000000).toString();
     otpData = {
@@ -194,17 +224,15 @@ app.post("/api/send-otp", async (req, res) => {
         await sendEmail({
             to: email,
             subject: "GMC Admin Login OTP",
-            text: `Your GMC ${roleName} verification code is: ${otp}
-
-This OTP expires in 5 minutes. If you did not request this code, ignore this email.`,
-            html: `<div style="font-family:Arial,sans-serif;background:#080808;color:#fff;padding:30px"><div style="max-width:500px;margin:auto;border:1px solid #ff2222;border-radius:14px;padding:28px;background:#0d0d0d"><h2 style="color:#ff2222;margin-top:0">GMC ADMIN</h2><p>Your ${roleName} verification code is:</p><div style="font-size:34px;font-weight:900;letter-spacing:8px;color:#fff;background:#151515;border:1px solid #333;border-radius:10px;padding:16px;text-align:center">${otp}</div><p style="color:#999">This OTP expires in 5 minutes and can only be used once.</p></div></div>`
+            textPart: `Your GMC ${roleName} verification code is: ${otp}\n\nThis OTP expires in 5 minutes. If you did not request this code, ignore this email.`,
+            htmlPart: `<div style="font-family:Arial,sans-serif;background:#080808;color:#fff;padding:30px"><div style="max-width:500px;margin:auto;border:1px solid #ff2222;border-radius:14px;padding:28px;background:#0d0d0d"><h2 style="color:#ff2222;margin-top:0">GMC ADMIN</h2><p>Your ${escapeHtml(roleName)} verification code is:</p><div style="font-size:34px;font-weight:900;letter-spacing:8px;color:#fff;background:#151515;border:1px solid #333;border-radius:10px;padding:16px;text-align:center">${otp}</div><p style="color:#999">This OTP expires in 5 minutes and can only be used once.</p></div></div>`
         });
         console.log("OTP EMAIL SENT TO:", email);
         return res.json({ message: `OTP sent to ${email}.` });
     } catch (error) {
         otpData = null;
         console.error("EMAIL SEND FAILED:", error);
-        return res.status(500).json({ message: "Failed to send OTP. Please check Resend configuration." });
+        return res.status(500).json({ message: "Failed to send OTP. Check Mailjet settings and sender verification." });
     }
 });
 
@@ -476,7 +504,9 @@ app.post("/api/contact", async (req, res) => {
     if (!name || !email || !subject || !message) return res.status(400).json({ message: "Please fill in all required fields." });
     if (name.length > 100 || email.length > 200 || subject.length > 200 || phone.length > 30 || message.length > 5000) return res.status(400).json({ message: "One or more fields are too long." });
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ message: "Please enter a valid email address." });
-    if (!process.env.SMTP_USER || !process.env.SMTP_PASS) return res.status(500).json({ message: "Email service is not configured." });
+    if (!MAILJET_API_KEY || !MAILJET_SECRET_KEY) {
+        return res.status(500).json({ message: "Mailjet email service is not configured." });
+    }
 
     try {
         await sendEmail({
