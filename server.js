@@ -18,6 +18,10 @@ app.use(express.json({ limit: "200kb" }));
 app.use(express.urlencoded({ extended: false }));
 app.use(express.static(__dirname));
 
+app.get("/", (req, res) => {
+    res.sendFile(path.join(__dirname, "first.html"));
+});
+
 let otpData = null;
 const sessions = new Map();
 
