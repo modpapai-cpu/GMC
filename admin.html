@@ -125,7 +125,7 @@ async function verifyOTP(){
 }
 async function logout(){
  try{
-  await fetch("/api/logout",{method:"POST"});
+  await fetch("/api/logout",{method:"POST",cache:"no-store",credentials:"same-origin"});
  }catch(e){
   console.error("Logout error:", e);
  }finally{

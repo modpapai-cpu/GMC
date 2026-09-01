@@ -416,8 +416,18 @@ async function removeProduct(id){
 }
 
 async function logout(){
-    await fetch("/api/logout",{method:"POST"}).catch(()=>{});
-    location.href="admin.html";
+    try {
+        await fetch("/api/logout", {
+            method:"POST",
+            cache:"no-store",
+            credentials:"same-origin"
+        });
+    } catch(e) {
+        console.error("Logout error:", e);
+    } finally {
+        // Logout should never return to the login page's session redirect.
+        window.location.replace("first.html");
+    }
 }
 
 

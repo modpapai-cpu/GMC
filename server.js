@@ -455,7 +455,22 @@ app.get("/api/admin-status", async (req, res) => {
 });
 
 app.post("/api/logout", async (req, res) => {
-    await clearSession(res, req);
+    try {
+        // Revoke the server-side session when possible.
+        const session = await getSession(req);
+        if (session) {
+            await db.collection(COLLECTIONS.sessions).doc(session.token).delete().catch(() => {});
+        }
+    } catch (error) {
+        console.error("LOGOUT SESSION REVOKE ERROR:", error);
+    }
+
+    // Always expire the browser cookie, even if the session is already gone.
+    res.setHeader(
+        "Set-Cookie",
+        "gmc_admin_session=; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Path=/; HttpOnly; SameSite=Lax"
+    );
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
     res.json({ message: "Logged out." });
 });
 
