@@ -246,6 +246,102 @@
             line-height: 1.7;
         }
 
+        /* ================= PRODUCT SEARCH ================= */
+
+        .product-search {
+            position: relative;
+            width: min(620px, 92%);
+            margin: 28px auto 0;
+            display: flex;
+            align-items: center;
+            border: 1px solid rgba(255,0,0,.25);
+            border-radius: 12px;
+            background: rgba(8,8,8,.72);
+            box-shadow: 0 0 28px rgba(255,0,0,.06), inset 0 0 20px rgba(255,0,0,.025);
+            transition: .25s ease;
+            overflow: hidden;
+        }
+
+        .product-search:focus-within {
+            border-color: rgba(255,0,0,.65);
+            box-shadow: 0 0 0 3px rgba(255,0,0,.06), 0 0 35px rgba(255,0,0,.12);
+        }
+
+        .search-icon {
+            width: 46px;
+            flex: 0 0 46px;
+            text-align: center;
+            color: #ff2525;
+            font-size: 24px;
+            line-height: 1;
+            text-shadow: 0 0 10px rgba(255,0,0,.45);
+            transform: rotate(-20deg);
+        }
+
+        .product-search input {
+            width: 100%;
+            padding: 15px 45px 15px 0;
+            border: 0;
+            outline: 0;
+            background: transparent;
+            color: #fff;
+            font-size: 13px;
+        }
+
+        .product-search input::placeholder { color: #666; }
+        .product-search input::-webkit-search-cancel-button { display: none; }
+
+        #clearProductSearch {
+            position: absolute;
+            right: 9px;
+            width: 30px;
+            height: 30px;
+            padding: 0;
+            border: 1px solid transparent;
+            border-radius: 50%;
+            background: transparent;
+            color: #777;
+            font-size: 20px;
+            line-height: 1;
+            cursor: pointer;
+            display: none;
+        }
+
+        #clearProductSearch:hover {
+            color: #fff;
+            background: rgba(255,0,0,.15);
+            border-color: rgba(255,0,0,.35);
+        }
+
+        .search-status {
+            min-height: 17px;
+            margin-top: 10px;
+            color: #777;
+            font-size: 10px;
+            letter-spacing: .4px;
+        }
+
+        .product-card.search-hidden {
+            display: none !important;
+        }
+
+        .search-no-results {
+            grid-column: 1 / -1;
+            padding: 60px 20px;
+            text-align: center;
+            color: #666;
+            border: 1px solid #1b1b1b;
+            border-radius: 16px;
+            background: rgba(255,0,0,.025);
+        }
+
+        .search-no-results strong {
+            display: block;
+            margin-bottom: 7px;
+            color: #ff3030;
+            font-size: 13px;
+        }
+
         /* ================= PRODUCTS ================= */
 
         .products {
@@ -765,6 +861,14 @@
             and choose the plan that suits you.
         </p>
 
+        <div class="product-search" role="search">
+            <span class="search-icon" aria-hidden="true">⌕</span>
+            <input id="productSearch" type="search" placeholder="Search products..."
+                   autocomplete="off" aria-label="Search products">
+            <button id="clearProductSearch" type="button" aria-label="Clear search">×</button>
+        </div>
+        <div id="searchStatus" class="search-status" aria-live="polite"></div>
+
     </header>
 
 
@@ -874,6 +978,49 @@
     }
 
     loadProducts();
+
+    // Live product search: filters the products already loaded from the API.
+    const productSearch = document.getElementById("productSearch");
+    const clearProductSearch = document.getElementById("clearProductSearch");
+    const searchStatus = document.getElementById("searchStatus");
+
+    function filterProducts() {
+        const query = productSearch.value.trim().toLowerCase();
+        const cards = Array.from(document.querySelectorAll("#products-container .product-card"));
+        let visible = 0;
+
+        cards.forEach(card => {
+            const haystack = card.textContent.toLowerCase();
+            const match = !query || haystack.includes(query);
+            card.classList.toggle("search-hidden", !match);
+            if (match) visible++;
+        });
+
+        let empty = document.getElementById("searchNoResults");
+        if (query && cards.length && visible === 0) {
+            if (!empty) {
+                empty = document.createElement("div");
+                empty.id = "searchNoResults";
+                empty.className = "search-no-results";
+                empty.innerHTML = "<strong>No matching product</strong>Try another product name or keyword.";
+                document.getElementById("products-container").appendChild(empty);
+            }
+        } else if (empty) {
+            empty.remove();
+        }
+
+        clearProductSearch.style.display = query ? "block" : "none";
+        searchStatus.textContent = query
+            ? `${visible} product${visible === 1 ? "" : "s"} found`
+            : "";
+    }
+
+    productSearch.addEventListener("input", filterProducts);
+    clearProductSearch.addEventListener("click", () => {
+        productSearch.value = "";
+        productSearch.focus();
+        filterProducts();
+    });
     
         const imageLightbox=document.getElementById("imageLightbox");
         const lightboxImage=document.getElementById("lightboxImage");
