@@ -22,9 +22,16 @@ button{width:100%;padding:13px;border:1px solid #ff2828;border-radius:8px;color:
 .hidden{display:none}.msg{text-align:center;margin-top:14px;min-height:16px;color:#ff4444;font-size:11px}.success{color:#4cff7a}.back{display:block;text-align:center;margin-top:20px;color:#777;text-decoration:none;font-size:11px}
 .dashboard h2{text-align:center;margin-bottom:12px}.dashboard p{text-align:center;color:#777;font-size:12px;margin-bottom:22px}
 @media(max-width:650px){nav{padding:0 5%}.logo{font-size:15px}.nav-links{gap:9px}.nav-links a{font-size:8px}.page{padding-left:5%;padding-right:5%}.card{padding:30px 22px}}
+body.session-checking .page{
+    visibility:hidden;
+}
+
+body.session-checking nav{
+    visibility:hidden;
+}
 </style>
 </head>
-<body>
+<body class="session-checking">
 <div class="background"><div class="grid"></div><div class="glow one"></div><div class="glow two"></div></div>
 <nav>
 <a href="first.html" class="logo">GMC</a>
@@ -69,12 +76,25 @@ async function post(url,data){
  return j;
 }
 async function checkExistingSession(){
- try{
-  const r=await fetch("/api/admin-status",{cache:"no-store"});
-  const j=await r.json();
-  if(j.authenticated){ location.replace("admin-dashboard.html"); }
- }catch(e){ /* stay on login page */ }
+    try{
+        const r = await fetch("/api/admin-status", {
+            cache: "no-store"
+        });
+
+        const j = await r.json();
+
+        if(j.authenticated){
+            location.replace("admin-dashboard.html");
+            return;
+        }
+    }catch(e){
+        console.error("Session check failed:", e);
+    }
+
+    // Not logged in → show login page
+    document.body.classList.remove("session-checking");
 }
+
 checkExistingSession();
 
 async function sendOTP(){
