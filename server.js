@@ -9,9 +9,6 @@ const ADMIN_EMAIL = "modpapai@gmail.com";
 const OTP_TTL = 5 * 60 * 1000;
 const SESSION_TTL = 15 * 60 * 1000;
 const MAX_OTP_ATTEMPTS = 5;
-const PRODUCTS_FILE = path.join(__dirname, "products.json");
-const CONTACTS_FILE = path.join(__dirname, "contacts.json");
-const ADMINS_FILE = path.join(__dirname, "admins.json");
 
 app.use(express.json({ limit: "200kb" }));
 app.use(express.urlencoded({ extended: false }));
@@ -21,115 +18,175 @@ app.get("/", (req, res) => {
     res.sendFile(path.join(__dirname, "first.html"));
 });
 
-let otpData = null;
-const sessions = new Map();
+/*
+ * Persistent storage: Firebase Cloud Firestore
+ *
+ * Required Render environment variables:
+ *   FIREBASE_PROJECT_ID
+ *   FIREBASE_CLIENT_EMAIL
+ *   FIREBASE_PRIVATE_KEY
+ *
+ * Optional:
+ *   FIREBASE_SERVICE_ACCOUNT_JSON
+ */
+const firebaseProjectId = process.env.FIREBASE_PROJECT_ID || "";
+const firebaseClientEmail = process.env.FIREBASE_CLIENT_EMAIL || "";
+const firebasePrivateKey = process.env.FIREBASE_PRIVATE_KEY || "";
+const firebaseServiceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON || "";
+
+let adminSdk;
+try {
+    adminSdk = require("firebase-admin");
+} catch (error) {
+    console.error("Firebase Admin SDK is missing. Run: npm install firebase-admin");
+    throw error;
+}
+
+let serviceAccount;
+if (firebaseServiceAccountJson) {
+    try {
+        serviceAccount = JSON.parse(firebaseServiceAccountJson);
+    } catch (error) {
+        throw new Error("FIREBASE_SERVICE_ACCOUNT_JSON is not valid JSON.");
+    }
+} else if (firebaseProjectId && firebaseClientEmail && firebasePrivateKey) {
+    serviceAccount = {
+        projectId: firebaseProjectId,
+        clientEmail: firebaseClientEmail,
+        privateKey: firebasePrivateKey.replace(/\\n/g, "\n")
+    };
+} else {
+    throw new Error(
+        "Firebase is not configured. Set FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL and FIREBASE_PRIVATE_KEY in Render Environment."
+    );
+}
+
+if (!adminSdk.apps.length) {
+    adminSdk.initializeApp({
+        credential: adminSdk.credential.cert(serviceAccount)
+    });
+}
+
+const db = adminSdk.firestore();
+
+const COLLECTIONS = {
+    admins: "admins",
+    products: "products",
+    contacts: "contacts",
+    sessions: "admin_sessions",
+    otps: "admin_otps"
+};
 
 function cleanEmail(value) {
     return String(value || "").trim().toLowerCase();
 }
 
-function loadProducts() {
-    try {
-        if (!fs.existsSync(PRODUCTS_FILE)) return [];
-        const data = JSON.parse(fs.readFileSync(PRODUCTS_FILE, "utf8"));
-        return Array.isArray(data) ? data : [];
-    } catch (error) {
-        console.error("PRODUCT LOAD ERROR:", error.message);
-        return [];
+function docToData(snapshot) {
+    return { id: snapshot.id, ...snapshot.data() };
+}
+
+async function loadCollection(name) {
+    const snapshot = await db.collection(name).get();
+    return snapshot.docs.map(docToData);
+}
+
+async function getDocument(name, id) {
+    const snapshot = await db.collection(name).doc(id).get();
+    return snapshot.exists ? docToData(snapshot) : null;
+}
+
+/*
+ * Seed only when a collection is empty.
+ * This imports the existing JSON data once, but never overwrites
+ * data already stored in Firestore on later Render deployments.
+ */
+async function seedCollectionIfEmpty(name, items, idGetter) {
+    const snapshot = await db.collection(name).limit(1).get();
+    if (!snapshot.empty || !items.length) return;
+
+    const batch = db.batch();
+    for (const item of items) {
+        const id = String(idGetter(item));
+        batch.set(db.collection(name).doc(id), item);
+    }
+    await batch.commit();
+    console.log(`Seeded ${items.length} records into Firestore/${name}`);
+}
+
+async function seedFromJsonFiles() {
+    const seeds = [
+        ["products", "products.json", item => item.id || crypto.randomUUID()],
+        ["admins", "admins.json", item => cleanEmail(item.email) || crypto.randomUUID()],
+        ["contacts", "contacts.json", item => item.id || crypto.randomUUID()]
+    ];
+
+    for (const [collection, fileName, idGetter] of seeds) {
+        const filePath = path.join(__dirname, fileName);
+        if (!fs.existsSync(filePath)) continue;
+
+        try {
+            const parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
+            const items = Array.isArray(parsed) ? parsed : [];
+            await seedCollectionIfEmpty(collection, items, idGetter);
+        } catch (error) {
+            console.error(`SEED ERROR (${fileName}):`, error.message);
+        }
     }
 }
 
-function saveProducts(products) {
-    fs.writeFileSync(PRODUCTS_FILE, JSON.stringify(products, null, 2), "utf8");
+async function loadProducts() {
+    const products = await loadCollection(COLLECTIONS.products);
+    return products;
 }
 
-function parseCookies(req) {
-    const result = {};
-    const header = req.headers.cookie || "";
-    header.split(";").forEach(part => {
-        const index = part.indexOf("=");
-        if (index < 0) return;
-        const key = part.slice(0, index).trim();
-        const value = part.slice(index + 1).trim();
-        result[key] = decodeURIComponent(value);
-    });
-    return result;
+async function loadAdmins() {
+    return await loadCollection(COLLECTIONS.admins);
 }
 
-function createSession(res, email, role) {
-    const token = crypto.randomBytes(32).toString("hex");
-    const expiresAt = Date.now() + SESSION_TTL;
-    sessions.set(token, { expiresAt, email, role });
-
-    const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
-    res.setHeader(
-        "Set-Cookie",
-        `gmc_admin_session=${token}; Max-Age=900; Path=/; HttpOnly; SameSite=Lax${secure}`
-    );
-    return expiresAt;
+async function loadContacts() {
+    return await loadCollection(COLLECTIONS.contacts);
 }
 
-function getSession(req) {
-    const token = parseCookies(req).gmc_admin_session;
-    if (!token) return null;
-    const session = sessions.get(token);
-    if (!session) return null;
-    if (Date.now() >= session.expiresAt) {
-        sessions.delete(token);
-        return null;
+async function saveCollection(name, items, idGetter) {
+    const collection = db.collection(name);
+    const existing = await collection.get();
+
+    const incomingIds = new Set(items.map(item => String(idGetter(item))));
+    const batch = db.batch();
+
+    for (const doc of existing.docs) {
+        if (!incomingIds.has(doc.id)) batch.delete(doc.ref);
     }
-    return { token, ...session };
-}
 
-function requireAdmin(req, res, next) {
-    const session = getSession(req);
-    if (!session) return res.status(401).json({ message: "Admin session expired. Please login again." });
-    req.adminSession = session;
-    next();
-}
-
-function requireSuperAdmin(req, res, next) {
-    const session = getSession(req);
-    if (!session) return res.status(401).json({ message: "Admin session expired. Please login again." });
-    if (session.role !== "super") return res.status(403).json({ message: "Super Admin access required." });
-    req.adminSession = session;
-    next();
-}
-
-function clearSession(res, req) {
-    const session = getSession(req);
-    if (session) sessions.delete(session.token);
-    res.setHeader("Set-Cookie", "gmc_admin_session=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax");
-}
-
-function loadAdmins() {
-    try {
-        if (!fs.existsSync(ADMINS_FILE)) return [];
-        const data = JSON.parse(fs.readFileSync(ADMINS_FILE, "utf8"));
-        return Array.isArray(data) ? data : [];
-    } catch (error) {
-        console.error("ADMIN LOAD ERROR:", error.message);
-        return [];
+    for (const item of items) {
+        const id = String(idGetter(item));
+        batch.set(collection.doc(id), item);
     }
+
+    await batch.commit();
 }
 
-function saveAdmins(admins) {
-    fs.writeFileSync(ADMINS_FILE, JSON.stringify(admins, null, 2), "utf8");
-}
-
-function isSuperAdmin(email) {
+async function isSuperAdmin(email) {
     return cleanEmail(email) === ADMIN_EMAIL;
 }
 
-function isAllowedAdmin(email) {
+async function isAllowedAdmin(email) {
     const normalized = cleanEmail(email);
-    return normalized === ADMIN_EMAIL || loadAdmins().some(a => cleanEmail(a.email) === normalized);
+    if (normalized === ADMIN_EMAIL) return true;
+
+    const snapshot = await db.collection(COLLECTIONS.admins)
+        .where("email", "==", normalized)
+        .limit(1)
+        .get();
+
+    return !snapshot.empty;
 }
 
 function getRole(email) {
-    return isSuperAdmin(email) ? "super" : "admin";
+    return cleanEmail(email) === ADMIN_EMAIL ? "super" : "admin";
 }
 
+/* Email: Mailjet */
 const MAILJET_API_KEY = process.env.MAILJET_API_KEY || "";
 const MAILJET_SECRET_KEY = process.env.MAILJET_SECRET_KEY || "";
 const MAIL_FROM = process.env.MAIL_FROM || "modpapai@gmail.com";
@@ -155,9 +212,7 @@ async function sendEmail({ to, subject, textPart, htmlPart, replyTo }) {
     };
 
     if (replyTo) {
-        payload.Messages[0].ReplyTo = {
-            Email: replyTo
-        };
+        payload.Messages[0].ReplyTo = { Email: replyTo };
     }
 
     const auth = Buffer
@@ -197,160 +252,384 @@ async function sendEmail({ to, subject, textPart, htmlPart, replyTo }) {
 console.log("================================");
 console.log("GMC ADMIN SERVER");
 console.log("================================");
+console.log("FIREBASE:", serviceAccount ? "SET" : "NOT SET");
 console.log("MAILJET API KEY:", MAILJET_API_KEY ? "SET" : "NOT SET");
 console.log("MAIL FROM:", MAIL_FROM);
 
-/* OTP */
+/* OTP — stored per email in Firestore, so simultaneous logins do not overwrite each other. */
 app.post("/api/send-otp", async (req, res) => {
     const email = cleanEmail(req.body.email);
     console.log("OTP REQUEST:", email);
 
-    if (!email || !isAllowedAdmin(email)) return res.status(403).json({ message: "This email is not authorized for admin access." });
-    if (!MAILJET_API_KEY || !MAILJET_SECRET_KEY) {
-        return res.status(500).json({ message: "Mailjet email service is not configured." });
-    }
-
-    const otp = crypto.randomInt(100000, 1000000).toString();
-    otpData = {
-        email,
-        hash: crypto.createHash("sha256").update(otp).digest("hex"),
-        expires: Date.now() + OTP_TTL,
-        attempts: 0
-    };
-
-    const roleName = getRole(email) === "super" ? "Super Admin" : "Admin";
-
     try {
-        await sendEmail({
-            to: email,
-            subject: "GMC Admin Login OTP",
-            textPart: `Your GMC ${roleName} verification code is: ${otp}\n\nThis OTP expires in 5 minutes. If you did not request this code, ignore this email.`,
-            htmlPart: `<div style="font-family:Arial,sans-serif;background:#080808;color:#fff;padding:30px"><div style="max-width:500px;margin:auto;border:1px solid #ff2222;border-radius:14px;padding:28px;background:#0d0d0d"><h2 style="color:#ff2222;margin-top:0">GMC ADMIN</h2><p>Your ${escapeHtml(roleName)} verification code is:</p><div style="font-size:34px;font-weight:900;letter-spacing:8px;color:#fff;background:#151515;border:1px solid #333;border-radius:10px;padding:16px;text-align:center">${otp}</div><p style="color:#999">This OTP expires in 5 minutes and can only be used once.</p></div></div>`
+        if (!email || !(await isAllowedAdmin(email))) {
+            return res.status(403).json({ message: "This email is not authorized for admin access." });
+        }
+
+        if (!MAILJET_API_KEY || !MAILJET_SECRET_KEY) {
+            return res.status(500).json({ message: "Mailjet email service is not configured." });
+        }
+
+        const otp = crypto.randomInt(100000, 1000000).toString();
+        const otpDocId = encodeURIComponent(email);
+        const otpHash = crypto.createHash("sha256").update(otp).digest("hex");
+
+        await db.collection(COLLECTIONS.otps).doc(otpDocId).set({
+            email,
+            hash: otpHash,
+            expires: Date.now() + OTP_TTL,
+            attempts: 0,
+            createdAt: adminSdk.firestore.FieldValue.serverTimestamp()
         });
-        console.log("OTP EMAIL SENT TO:", email);
-        return res.json({ message: `OTP sent to ${email}.` });
+
+        const roleName = getRole(email) === "super" ? "Super Admin" : "Admin";
+
+        try {
+            await sendEmail({
+                to: email,
+                subject: "GMC Admin Login OTP",
+                textPart: `Your GMC ${roleName} verification code is: ${otp}\n\nThis OTP expires in 5 minutes. If you did not request this code, ignore this email.`,
+                htmlPart: `<div style="font-family:Arial,sans-serif;background:#080808;color:#fff;padding:30px"><div style="max-width:500px;margin:auto;border:1px solid #ff2222;border-radius:14px;padding:28px;background:#0d0d0d"><h2 style="color:#ff2222;margin-top:0">GMC ADMIN</h2><p>Your ${escapeHtml(roleName)} verification code is:</p><div style="font-size:34px;font-weight:900;letter-spacing:8px;color:#fff;background:#151515;border:1px solid #333;border-radius:10px;padding:16px;text-align:center">${otp}</div><p style="color:#999">This OTP expires in 5 minutes and can only be used once.</p></div></div>`
+            });
+
+            console.log("OTP EMAIL SENT TO:", email);
+            return res.json({ message: `OTP sent to ${email}.` });
+        } catch (error) {
+            await db.collection(COLLECTIONS.otps).doc(otpDocId).delete().catch(() => {});
+            console.error("EMAIL SEND FAILED:", error);
+            return res.status(500).json({ message: "Failed to send OTP. Check Mailjet settings and sender verification." });
+        }
     } catch (error) {
-        otpData = null;
-        console.error("EMAIL SEND FAILED:", error);
-        return res.status(500).json({ message: "Failed to send OTP. Check Mailjet settings and sender verification." });
+        console.error("OTP REQUEST FAILED:", error);
+        return res.status(500).json({ message: "Unable to process OTP request." });
     }
 });
 
-app.post("/api/verify-otp", (req, res) => {
+app.post("/api/verify-otp", async (req, res) => {
     const email = cleanEmail(req.body.email);
     const otp = String(req.body.otp || "").trim();
 
-    if (!isAllowedAdmin(email)) return res.status(403).json({ message: "This email is not authorized for admin access." });
-    if (!otpData || otpData.email !== email) return res.status(400).json({ message: "No OTP requested for this email." });
-    if (Date.now() >= otpData.expires) {
-        otpData = null;
-        return res.status(400).json({ message: "OTP expired. Request a new OTP." });
-    }
-    if (otpData.attempts >= MAX_OTP_ATTEMPTS) {
-        otpData = null;
-        return res.status(429).json({ message: "Too many attempts. Request a new OTP." });
-    }
+    try {
+        if (!(await isAllowedAdmin(email))) {
+            return res.status(403).json({ message: "This email is not authorized for admin access." });
+        }
 
-    otpData.attempts++;
-    const hash = crypto.createHash("sha256").update(otp).digest("hex");
-    if (hash !== otpData.hash) return res.status(401).json({ message: "Invalid OTP." });
+        const otpDocId = encodeURIComponent(email);
+        const ref = db.collection(COLLECTIONS.otps).doc(otpDocId);
+        const snapshot = await ref.get();
 
-    otpData = null;
-    const role = getRole(email);
-    const expiresAt = createSession(res, email, role);
-    console.log(`${role.toUpperCase()} LOGIN SUCCESS — SESSION 15 MINUTES — ${email}`);
-    return res.json({ message: "OTP verified. Admin access granted.", expiresAt, role, email });
+        if (!snapshot.exists) {
+            return res.status(400).json({ message: "No OTP requested for this email." });
+        }
+
+        const otpData = snapshot.data();
+
+        if (Date.now() >= otpData.expires) {
+            await ref.delete();
+            return res.status(400).json({ message: "OTP expired. Request a new OTP." });
+        }
+
+        if ((otpData.attempts || 0) >= MAX_OTP_ATTEMPTS) {
+            await ref.delete();
+            return res.status(429).json({ message: "Too many attempts. Request a new OTP." });
+        }
+
+        const nextAttempts = (otpData.attempts || 0) + 1;
+        await ref.update({ attempts: nextAttempts });
+
+        const hash = crypto.createHash("sha256").update(otp).digest("hex");
+        if (hash !== otpData.hash) {
+            return res.status(401).json({ message: "Invalid OTP." });
+        }
+
+        await ref.delete();
+
+        const role = getRole(email);
+        const expiresAt = await createSession(res, email, role);
+        console.log(`${role.toUpperCase()} LOGIN SUCCESS — SESSION 15 MINUTES — ${email}`);
+        return res.json({ message: "OTP verified. Admin access granted.", expiresAt, role, email });
+    } catch (error) {
+        console.error("OTP VERIFY FAILED:", error);
+        return res.status(500).json({ message: "Unable to verify OTP." });
+    }
 });
 
-app.get("/api/admin-status", (req, res) => {
-    const session = getSession(req);
-    res.json({ authenticated: !!session, expiresAt: session ? session.expiresAt : 0, role: session ? session.role : null, email: session ? session.email : null });
+/* Sessions — persistent in Firestore so a Render restart does not silently log everyone out. */
+async function createSession(res, email, role) {
+    const token = crypto.randomBytes(32).toString("hex");
+    const expiresAt = Date.now() + SESSION_TTL;
+
+    await db.collection(COLLECTIONS.sessions).doc(token).set({
+        email,
+        role,
+        expiresAt,
+        createdAt: adminSdk.firestore.FieldValue.serverTimestamp()
+    });
+
+    const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
+    res.setHeader(
+        "Set-Cookie",
+        `gmc_admin_session=${token}; Max-Age=900; Path=/; HttpOnly; SameSite=Lax${secure}`
+    );
+
+    return expiresAt;
+}
+
+function parseCookies(req) {
+    const result = {};
+    const header = req.headers.cookie || "";
+    header.split(";").forEach(part => {
+        const index = part.indexOf("=");
+        if (index < 0) return;
+        const key = part.slice(0, index).trim();
+        const value = part.slice(index + 1).trim();
+        try {
+            result[key] = decodeURIComponent(value);
+        } catch {
+            result[key] = value;
+        }
+    });
+    return result;
+}
+
+async function getSession(req) {
+    const token = parseCookies(req).gmc_admin_session;
+    if (!token) return null;
+
+    const snapshot = await db.collection(COLLECTIONS.sessions).doc(token).get();
+    if (!snapshot.exists) return null;
+
+    const data = snapshot.data();
+    if (Date.now() >= Number(data.expiresAt || 0)) {
+        await snapshot.ref.delete().catch(() => {});
+        return null;
+    }
+
+    return { token, ...data };
+}
+
+async function requireAdmin(req, res, next) {
+    try {
+        const session = await getSession(req);
+        if (!session) return res.status(401).json({ message: "Admin session expired. Please login again." });
+        req.adminSession = session;
+        next();
+    } catch (error) {
+        console.error("SESSION CHECK ERROR:", error);
+        return res.status(500).json({ message: "Unable to check admin session." });
+    }
+}
+
+async function requireSuperAdmin(req, res, next) {
+    try {
+        const session = await getSession(req);
+        if (!session) return res.status(401).json({ message: "Admin session expired. Please login again." });
+        if (session.role !== "super") return res.status(403).json({ message: "Super Admin access required." });
+        req.adminSession = session;
+        next();
+    } catch (error) {
+        console.error("SUPER SESSION CHECK ERROR:", error);
+        return res.status(500).json({ message: "Unable to check admin session." });
+    }
+}
+
+async function clearSession(res, req) {
+    const session = await getSession(req);
+    if (session) await db.collection(COLLECTIONS.sessions).doc(session.token).delete().catch(() => {});
+    res.setHeader("Set-Cookie", "gmc_admin_session=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax");
+}
+
+app.get("/api/admin-status", async (req, res) => {
+    try {
+        const session = await getSession(req);
+        res.json({
+            authenticated: !!session,
+            expiresAt: session ? session.expiresAt : 0,
+            role: session ? session.role : null,
+            email: session ? session.email : null
+        });
+    } catch (error) {
+        console.error("ADMIN STATUS ERROR:", error);
+        res.status(500).json({ authenticated: false, expiresAt: 0, role: null, email: null });
+    }
 });
 
-app.post("/api/logout", (req, res) => {
-    clearSession(res, req);
+app.post("/api/logout", async (req, res) => {
+    await clearSession(res, req);
     res.json({ message: "Logged out." });
 });
 
-
 /* Admin management — Super Admin only */
-app.get("/api/admins", requireSuperAdmin, (req, res) => {
-    res.json(loadAdmins().map(a => ({ email: a.email })));
+app.get("/api/admins", requireSuperAdmin, async (req, res) => {
+    try {
+        res.json((await loadAdmins()).map(a => ({ email: a.email })));
+    } catch (error) {
+        console.error("ADMIN LIST ERROR:", error);
+        res.status(500).json({ message: "Unable to load admins." });
+    }
 });
 
-app.post("/api/admins", requireSuperAdmin, (req, res) => {
-    const email = cleanEmail(req.body.email);
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ message: "Enter a valid admin email." });
-    if (email === ADMIN_EMAIL) return res.status(400).json({ message: "Super Admin email is already configured." });
-    const admins = loadAdmins();
-    if (admins.some(a => cleanEmail(a.email) === email)) return res.status(409).json({ message: "This admin email already exists." });
-    admins.push({ email, createdAt: new Date().toISOString() });
-    saveAdmins(admins);
-    res.status(201).json({ message: "Admin email added.", admins: admins.map(a => ({ email: a.email })) });
+app.post("/api/admins", requireSuperAdmin, async (req, res) => {
+    try {
+        const email = cleanEmail(req.body.email);
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ message: "Enter a valid admin email." });
+        if (email === ADMIN_EMAIL) return res.status(400).json({ message: "Super Admin email is already configured." });
+
+        const ref = db.collection(COLLECTIONS.admins).doc(encodeURIComponent(email));
+        if ((await ref.get()).exists) return res.status(409).json({ message: "This admin email already exists." });
+
+        await ref.set({ email, createdAt: new Date().toISOString() });
+        res.status(201).json({ message: "Admin email added.", admins: (await loadAdmins()).map(a => ({ email: a.email })) });
+    } catch (error) {
+        console.error("ADMIN ADD ERROR:", error);
+        res.status(500).json({ message: "Unable to add admin." });
+    }
 });
 
-app.delete("/api/admins/:email", requireSuperAdmin, (req, res) => {
-    const email = cleanEmail(decodeURIComponent(req.params.email));
-    if (email === ADMIN_EMAIL) return res.status(400).json({ message: "Super Admin cannot be removed." });
-    const admins = loadAdmins();
-    const filtered = admins.filter(a => cleanEmail(a.email) !== email);
-    if (filtered.length === admins.length) return res.status(404).json({ message: "Admin email not found." });
-    saveAdmins(filtered);
-    res.json({ message: "Admin email removed." });
+app.delete("/api/admins/:email", requireSuperAdmin, async (req, res) => {
+    try {
+        const email = cleanEmail(decodeURIComponent(req.params.email));
+        if (email === ADMIN_EMAIL) return res.status(400).json({ message: "Super Admin cannot be removed." });
+
+        const ref = db.collection(COLLECTIONS.admins).doc(encodeURIComponent(email));
+        if (!(await ref.get()).exists) return res.status(404).json({ message: "Admin email not found." });
+
+        await ref.delete();
+        res.json({ message: "Admin email removed." });
+    } catch (error) {
+        console.error("ADMIN DELETE ERROR:", error);
+        res.status(500).json({ message: "Unable to remove admin." });
+    }
 });
 
 /* Contact settings */
-function loadContacts() {
+app.get("/api/contacts", async (req, res) => {
     try {
-        if (!fs.existsSync(CONTACTS_FILE)) return [];
-        const data = JSON.parse(fs.readFileSync(CONTACTS_FILE, "utf8"));
-        return Array.isArray(data) ? data : [];
+        res.json(await loadContacts());
     } catch (error) {
-        console.error("CONTACT LOAD ERROR:", error.message);
-        return [];
+        console.error("CONTACT LOAD ERROR:", error);
+        res.status(500).json({ message: "Unable to load contact information." });
     }
-}
-
-function saveContacts(contacts) {
-    fs.writeFileSync(CONTACTS_FILE, JSON.stringify(contacts, null, 2), "utf8");
-}
-
-app.get("/api/contacts", (req, res) => {
-    res.json(loadContacts());
 });
 
-app.put("/api/contacts", requireAdmin, (req, res) => {
-    const incoming = Array.isArray(req.body.contacts) ? req.body.contacts : [];
-    if (!incoming.length || incoming.length > 12) {
-        return res.status(400).json({ message: "Invalid contact list." });
+app.put("/api/contacts", requireAdmin, async (req, res) => {
+    try {
+        const incoming = Array.isArray(req.body.contacts) ? req.body.contacts : [];
+        if (!incoming.length || incoming.length > 12) {
+            return res.status(400).json({ message: "Invalid contact list." });
+        }
+
+        const contacts = incoming.map((item, index) => ({
+            id: String(item.id || `contact-${index + 1}`).trim().slice(0, 50),
+            icon: String(item.icon || "◉").trim().slice(0, 8),
+            title: String(item.title || "CONTACT").trim().slice(0, 60),
+            description: String(item.description || "").trim().slice(0, 200),
+            text: String(item.text || "").trim().slice(0, 200),
+            url: String(item.url || "").trim().slice(0, 1000)
+        }));
+
+        await saveCollection(COLLECTIONS.contacts, contacts, item => item.id);
+        res.json({ message: "Contact information saved.", contacts });
+    } catch (error) {
+        console.error("CONTACT SAVE ERROR:", error);
+        res.status(500).json({ message: "Unable to save contact information." });
     }
-
-    const contacts = incoming.map((item, index) => ({
-        id: String(item.id || `contact-${index + 1}`).trim().slice(0, 50),
-        icon: String(item.icon || "◉").trim().slice(0, 8),
-        title: String(item.title || "CONTACT").trim().slice(0, 60),
-        description: String(item.description || "").trim().slice(0, 200),
-        text: String(item.text || "").trim().slice(0, 200),
-        url: String(item.url || "").trim().slice(0, 1000)
-    }));
-
-    saveContacts(contacts);
-    res.json({ message: "Contact information saved.", contacts });
 });
 
 /* Products */
-// Image proxy: lets product images work even when the image host blocks direct hotlinking.
+app.get("/api/products", async (req, res) => {
+    try {
+        res.json(await loadProducts());
+    } catch (error) {
+        console.error("PRODUCT LIST ERROR:", error);
+        res.status(500).json({ message: "Unable to load products." });
+    }
+});
+
+app.post("/api/products", requireAdmin, async (req, res) => {
+    try {
+        const body = req.body || {};
+        if (!String(body.name || "").trim()) return res.status(400).json({ message: "Product name is required." });
+
+        const product = {
+            id: crypto.randomUUID(),
+            icon: String(body.icon || "📦").trim(),
+            tag: String(body.tag || "NEW").trim(),
+            name: String(body.name).trim(),
+            description: String(body.description || "").trim(),
+            contentType: body.contentType === "image" ? "image" : "plans",
+            imageUrl: String(body.imageUrl || "").trim(),
+            plans: Array.isArray(body.plans) ? body.plans.slice(0, 20) : [],
+            buttons: Array.isArray(body.buttons) && body.buttons.length
+                ? body.buttons.slice(0, 2)
+                : [{ text: String(body.buttonText || "GET PRODUCT"), link: String(body.buttonLink || "#") }],
+            createdAt: new Date().toISOString()
+        };
+
+        await db.collection(COLLECTIONS.products).doc(product.id).set(product);
+        res.status(201).json(product);
+    } catch (error) {
+        console.error("PRODUCT ADD ERROR:", error);
+        res.status(500).json({ message: "Unable to save product." });
+    }
+});
+
+app.put("/api/products/:id", requireAdmin, async (req, res) => {
+    try {
+        const ref = db.collection(COLLECTIONS.products).doc(req.params.id);
+        const snapshot = await ref.get();
+        if (!snapshot.exists) return res.status(404).json({ message: "Product not found." });
+
+        const old = snapshot.data();
+        const body = req.body || {};
+        const updated = {
+            ...old,
+            icon: String(body.icon ?? old.icon ?? "📦").trim(),
+            tag: String(body.tag ?? old.tag ?? "NEW").trim(),
+            name: String(body.name ?? old.name ?? "").trim(),
+            description: String(body.description ?? old.description ?? "").trim(),
+            contentType: body.contentType === "image" ? "image"
+                : (body.contentType === "plans" ? "plans" : (old.contentType || "plans")),
+            imageUrl: String(body.imageUrl ?? old.imageUrl ?? "").trim(),
+            plans: Array.isArray(body.plans) ? body.plans.slice(0, 20) : (old.plans || []),
+            buttons: Array.isArray(body.buttons) && body.buttons.length
+                ? body.buttons.slice(0, 2)
+                : (old.buttons || [{ text: "GET PRODUCT", link: "#" }])
+        };
+
+        if (!updated.name) return res.status(400).json({ message: "Product name is required." });
+        await ref.set(updated);
+        res.json({ id: ref.id, ...updated });
+    } catch (error) {
+        console.error("PRODUCT UPDATE ERROR:", error);
+        res.status(500).json({ message: "Unable to update product." });
+    }
+});
+
+app.delete("/api/products/:id", requireAdmin, async (req, res) => {
+    try {
+        const ref = db.collection(COLLECTIONS.products).doc(req.params.id);
+        const snapshot = await ref.get();
+        if (!snapshot.exists) return res.status(404).json({ message: "Product not found." });
+
+        await ref.delete();
+        res.json({ message: "Product deleted." });
+    } catch (error) {
+        console.error("PRODUCT DELETE ERROR:", error);
+        res.status(500).json({ message: "Unable to delete product." });
+    }
+});
+
+/* Google Drive image proxy */
 function getGoogleDriveFileId(rawUrl) {
     try {
         const u = new URL(rawUrl);
         const host = u.hostname.toLowerCase();
         if (!host.includes("drive.google.com") && !host.includes("docs.google.com")) return null;
 
-        // /file/d/FILE_ID/view
         const fileMatch = u.pathname.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
         if (fileMatch) return fileMatch[1];
 
-        // /open?id=FILE_ID, /uc?id=FILE_ID, /uc?export=view&id=FILE_ID
         const id = u.searchParams.get("id");
         if (id && /^[a-zA-Z0-9_-]+$/.test(id)) return id;
         return null;
@@ -362,8 +641,6 @@ function getGoogleDriveFileId(rawUrl) {
 function buildImageTargets(rawUrl) {
     const driveId = getGoogleDriveFileId(rawUrl);
     if (driveId) {
-        // Google Drive has several public image endpoints. Try the thumbnail
-        // endpoint first because it reliably returns image bytes for public files.
         return [
             `https://drive.google.com/thumbnail?id=${encodeURIComponent(driveId)}&sz=w1600`,
             `https://drive.google.com/uc?export=view&id=${encodeURIComponent(driveId)}`,
@@ -388,6 +665,7 @@ app.get("/api/image-proxy", async (req, res) => {
         } catch {
             continue;
         }
+
         if (!/^https?:$/.test(target.protocol)) continue;
 
         try {
@@ -411,8 +689,6 @@ app.get("/api/image-proxy", async (req, res) => {
                 return res.status(413).send("Image is too large (max 8 MB).");
             }
 
-            // Ignore Drive login/permission pages returned as HTML and try the
-            // next public endpoint instead.
             if (!type.startsWith("image/")) {
                 lastStatus = 415;
                 lastMessage = "Google Drive did not return an image. Make the file public.";
@@ -434,62 +710,6 @@ app.get("/api/image-proxy", async (req, res) => {
             ? "Google Drive image is not publicly accessible. Set General access to Anyone with the link -> Viewer."
             : lastMessage
     );
-});
-
-app.get("/api/products", (req, res) => {
-    res.json(loadProducts());
-});
-
-app.post("/api/products", requireAdmin, (req, res) => {
-    const body = req.body || {};
-    if (!String(body.name || "").trim()) return res.status(400).json({ message: "Product name is required." });
-
-    const products = loadProducts();
-    const product = {
-        id: crypto.randomUUID(),
-        icon: String(body.icon || "📦").trim(),
-        tag: String(body.tag || "NEW").trim(),
-        name: String(body.name).trim(),
-        description: String(body.description || "").trim(),
-        contentType: body.contentType === "image" ? "image" : "plans",
-        imageUrl: String(body.imageUrl || "").trim(),
-        plans: Array.isArray(body.plans) ? body.plans.slice(0, 20) : [],
-        buttons: Array.isArray(body.buttons) && body.buttons.length ? body.buttons.slice(0, 2) : [{ text: String(body.buttonText || "GET PRODUCT"), link: String(body.buttonLink || "#") }]
-    };
-    products.push(product);
-    saveProducts(products);
-    res.status(201).json(product);
-});
-
-app.put("/api/products/:id", requireAdmin, (req, res) => {
-    const products = loadProducts();
-    const index = products.findIndex(p => p.id === req.params.id);
-    if (index < 0) return res.status(404).json({ message: "Product not found." });
-
-    const old = products[index];
-    const body = req.body || {};
-    products[index] = {
-        ...old,
-        icon: String(body.icon ?? old.icon ?? "📦").trim(),
-        tag: String(body.tag ?? old.tag ?? "NEW").trim(),
-        name: String(body.name ?? old.name ?? "").trim(),
-        description: String(body.description ?? old.description ?? "").trim(),
-        contentType: body.contentType === "image" ? "image" : (body.contentType === "plans" ? "plans" : (old.contentType || "plans")),
-        imageUrl: String(body.imageUrl ?? old.imageUrl ?? "").trim(),
-        plans: Array.isArray(body.plans) ? body.plans.slice(0, 20) : (old.plans || []),
-        buttons: Array.isArray(body.buttons) && body.buttons.length ? body.buttons.slice(0, 2) : (old.buttons || [{ text: "GET PRODUCT", link: "#" }])
-    };
-    if (!products[index].name) return res.status(400).json({ message: "Product name is required." });
-    saveProducts(products);
-    res.json(products[index]);
-});
-
-app.delete("/api/products/:id", requireAdmin, (req, res) => {
-    const products = loadProducts();
-    const filtered = products.filter(p => p.id !== req.params.id);
-    if (filtered.length === products.length) return res.status(404).json({ message: "Product not found." });
-    saveProducts(filtered);
-    res.json({ message: "Product deleted." });
 });
 
 /* Contact form */
@@ -557,6 +777,16 @@ function escapeHtml(value) {
     return String(value).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"}[c]));
 }
 
-app.listen(PORT, () => {
-    console.log(`GMC Admin server running on port ${PORT}`);
-});
+async function startServer() {
+    try {
+        await seedFromJsonFiles();
+        app.listen(PORT, () => {
+            console.log(`GMC Admin server running on port ${PORT}`);
+        });
+    } catch (error) {
+        console.error("FIREBASE STARTUP FAILED:", error);
+        process.exit(1);
+    }
+}
+
+startServer();
