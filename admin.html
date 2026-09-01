@@ -104,8 +104,13 @@ async function verifyOTP(){
  }catch(e){m.className="msg";m.textContent=e.message;b.disabled=false}
 }
 async function logout(){
- await fetch("/api/logout",{method:"POST"}).catch(()=>{});
- location.reload();
+ try{
+  await fetch("/api/logout",{method:"POST"});
+ }catch(e){
+  console.error("Logout error:", e);
+ }finally{
+  location.replace("first.html");
+ }
 }
 </script>
 </body>
