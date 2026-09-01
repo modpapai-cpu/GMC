@@ -269,7 +269,7 @@
 
         .hero-content {
             max-width: 720px;
-            animation: heroIn 1s ease forwards;
+            animation: heroIn .45s ease forwards;
         }
 
         @keyframes heroIn {
@@ -1102,5 +1102,10 @@
 
     </footer>
 
+<script id="gmc-sw-register">
+if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
+}
+</script>
 </body>
 </html>

@@ -20,51 +20,11 @@ nav{height:78px;padding:0 7%;display:flex;align-items:center;justify-content:spa
 @media(max-width:900px){.contact-preview-grid{grid-template-columns:repeat(2,1fr)}.admin-list{grid-template-columns:repeat(2,1fr)}}@media(max-width:650px){.contact-preview-grid{grid-template-columns:1fr}.admin-list{grid-template-columns:1fr}}
 .form-msg{color:#ff4444;font-size:10px;min-height:16px;margin:8px 0}
 @media(max-width:900px){.list{grid-template-columns:repeat(2,1fr)}}@media(max-width:650px){nav{padding:0 5%}.logo{font-size:15px}.nav a{font-size:9px}.wrap{width:90%;padding-top:45px}.top{align-items:start;flex-direction:column}.top h1{font-size:30px}.list{grid-template-columns:1fr}.row{grid-template-columns:1fr}.field.full{grid-column:auto}.plan-edit{grid-template-columns:1fr 1fr}.remove-plan{grid-column:1/-1;width:100%;padding:8px}}
-.user-info{
-    display:flex;
-    flex-direction:column;
-    align-items:flex-end;
-    gap:3px;
-    margin-right:4px;
-}
-
-.user-info #userRole{
-    color:#ff3030;
-    font-size:8px;
-    font-weight:900;
-    letter-spacing:1px;
-}
-
-.user-info #userBadge{
-    color:#aaa;
-    font-size:10px;
-    letter-spacing:.2px;
-}
-
-@media(max-width:650px){
-    .user-info #userBadge{
-        display:none;
-    }
-}
-
 </style>
 </head>
 <body>
 <div class="bg"><div class="grid"></div></div>
-<nav>
-    <a class="logo" href="first.html">GMC</a>
-
-    <div class="nav">
-        <div class="user-info">
-            <span id="userRole">ADMIN</span>
-            <span id="userBadge">admin@example.com</span>
-        </div>
-
-        <a href="product.html">VIEW PRODUCTS</a>
-        <a href="contact.html">VIEW CONTACT</a>
-        <a href="#" class="logout" onclick="logout();return false;">LOGOUT</a>
-    </div>
-</nav>
+<nav><a class="logo" href="first.html">GMC</a><div class="nav"><span id="userBadge" style="font-size:9px;color:#666;letter-spacing:.6px"></span><a href="product.html">VIEW PRODUCTS</a><a href="#" class="logout" onclick="logout();return false;">LOGOUT</a></div></nav>
 <main class="wrap">
 <section id="adminManager" class="contact-manager hidden">
 <div class="top" style="margin-bottom:18px">
@@ -196,8 +156,6 @@ async function init(){
         $("managerEyebrow").textContent = status.role === "super" ? "SUPER ADMIN" : "ADMIN";
         $("contactEyebrow").textContent = status.role === "super" ? "SUPER ADMIN" : "ADMIN";
         $("userBadge").textContent = status.email || "";
-        $("userRole").textContent =
-            status.role === "super" ? "SUPER ADMIN" : "ADMIN";
         if(status.role === "super"){
             $("adminManager").classList.remove("hidden");
             await loadAdmins();
@@ -478,6 +436,11 @@ document.addEventListener("visibilitychange", async () => {
         startSessionTimer(status.expiresAt);
     }catch(e){ location.replace("admin.html"); }
 });
+</script>
+<script id="gmc-sw-register">
+if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
+}
 </script>
 </body>
 </html>

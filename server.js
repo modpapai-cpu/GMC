@@ -12,6 +12,18 @@ const MAX_OTP_ATTEMPTS = 5;
 
 app.use(express.json({ limit: "200kb" }));
 app.use(express.urlencoded({ extended: false }));
+
+// Fast browser caching for static files. HTML is revalidated so deployments
+// appear immediately; the service worker handles repeat navigation/API cache.
+app.use((req, res, next) => {
+    if (req.path.startsWith("/api/")) return next();
+    if (req.path.endsWith(".html") || req.path === "/") {
+        res.setHeader("Cache-Control", "no-cache");
+    } else {
+        res.setHeader("Cache-Control", "public, max-age=86400, stale-while-revalidate=604800");
+    }
+    next();
+});
 app.use(express.static(__dirname));
 
 app.get("/", (req, res) => {
@@ -695,7 +707,7 @@ app.get("/api/image-proxy", async (req, res) => {
                 continue;
             }
 
-            res.setHeader("Cache-Control", "public, max-age=3600");
+            res.setHeader("Cache-Control", "public, max-age=86400, stale-while-revalidate=604800");
             res.setHeader("Content-Type", type);
             return res.send(buffer);
         } catch (error) {

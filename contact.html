@@ -122,5 +122,10 @@ function escapeHtmlContact(value){return String(value??"").replace(/[&<>"']/g,c=
 loadContactInfo();
 </script>
 
+<script id="gmc-sw-register">
+if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
+}
+</script>
 </body>
 </html>
