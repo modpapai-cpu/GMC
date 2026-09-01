@@ -186,7 +186,7 @@
             padding: 150px 7% 70px;
             text-align: center;
 
-            animation: pageIn .45s ease;
+            animation: pageIn 1s ease;
         }
 
         @keyframes pageIn {
@@ -296,7 +296,7 @@
                 box-shadow .38s ease,
                 border-color .38s ease;
 
-            animation: cardIn .35s ease backwards;
+            animation: cardIn .7s ease backwards;
 
             z-index: 1;
         }
@@ -824,7 +824,7 @@
 
                 const imageProxy = product.imageUrl ? `/api/image-proxy?url=${encodeURIComponent(product.imageUrl)}` : "";
                 const content = product.contentType === "image" && product.imageUrl
-                    ? `<div class="pricing image-content"><img loading="lazy" decoding="async" src="${escapeHtml(imageProxy)}" data-original="${escapeHtml(product.imageUrl)}" alt="${escapeHtml(product.name)}" onerror="if(this.dataset.tried!=="1"){this.dataset.tried="1";this.src=this.dataset.original;}else{this.style.display='none';this.nextElementSibling.style.display='flex'}"><div class="image-fallback">IMAGE UNAVAILABLE</div></div>`
+                    ? `<div class="pricing image-content"><img src="${escapeHtml(imageProxy)}" data-original="${escapeHtml(product.imageUrl)}" alt="${escapeHtml(product.name)}" onerror="if(this.dataset.tried!=="1"){this.dataset.tried="1";this.src=this.dataset.original;}else{this.style.display='none';this.nextElementSibling.style.display='flex'}"><div class="image-fallback">IMAGE UNAVAILABLE</div></div>`
                     : `<div class="pricing">${plans}</div>`;
 
                 return `
@@ -893,10 +893,5 @@
 
     </footer>
 
-<script id="gmc-sw-register">
-if ("serviceWorker" in navigator) {
-    window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
-}
-</script>
 </body>
 </html>
