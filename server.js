@@ -339,7 +339,9 @@ app.post("/api/send-otp", async (req, res) => {
             await sendEmail({
                 to: email,
                 subject: "GMC Admin Login OTP",
-                textPart: `Your GMC ${roleName} verification code is: ${otp}\n\nThis OTP expires in 5 minutes. If you did not request this code, ignore this email.`,
+                textPart: `Your GMC ${roleName} verification code is: ${otp}
+
+This OTP expires in 5 minutes. If you did not request this code, ignore this email.`,
                 htmlPart: `<div style="font-family:Arial,sans-serif;background:#080808;color:#fff;padding:30px"><div style="max-width:500px;margin:auto;border:1px solid #ff2222;border-radius:14px;padding:28px;background:#0d0d0d"><h2 style="color:#ff2222;margin-top:0">GMC ADMIN</h2><p>Your ${escapeHtml(roleName)} verification code is:</p><div style="font-size:34px;font-weight:900;letter-spacing:8px;color:#fff;background:#151515;border:1px solid #333;border-radius:10px;padding:16px;text-align:center">${otp}</div><p style="color:#999">This OTP expires in 5 minutes and can only be used once.</p></div></div>`
             });
 
@@ -804,7 +806,81 @@ app.post("/api/payment/qr", async (req, res) => {
     }
 });
 
-/* Return only the actual QR region from Razorpay's portrait QR poster.\n * The QR position is detected from the real returned image instead of using a\n * fixed CSS crop, so it remains readable across Razorpay image layouts.\n */\napp.get("/api/payment/qr-image/:purchaseId", async (req, res) => {\n    try {\n        const purchaseId = String(req.params.purchaseId || "").trim();\n        if (!purchaseId) return res.status(400).send("Purchase ID is required.");\n\n        const snapshot = await db.collection(COLLECTIONS.purchases).doc(purchaseId).get();\n        if (!snapshot.exists) return res.status(404).send("Payment session not found.");\n\n        const purchase = snapshot.data();\n        const sourceUrl = String(purchase.qrImageUrl || "").trim();\n        if (!sourceUrl) return res.status(404).send("QR image is not ready.");\n\n        const sourceResponse = await fetch(sourceUrl, {\n            redirect: "follow",\n            headers: { "User-Agent": "Mozilla/5.0", "Accept": "image/*,*/*;q=0.8" }\n        });\n        if (!sourceResponse.ok) {\n            return res.status(502).send(`Razorpay QR image request failed (${sourceResponse.status}).`);\n        }\n\n        const sourceBuffer = Buffer.from(await sourceResponse.arrayBuffer());\n        const decoded = await sharp(sourceBuffer).ensureAlpha().raw().toBuffer({ resolveWithObject: true });\n        const { data, info } = decoded;\n\n        const code = jsQR(new Uint8ClampedArray(data), info.width, info.height, {\n            inversionAttempts: "attemptBoth"\n        });\n\n        if (!code || !code.location) {\n            // Fallback: return the original image if detection fails rather than\n            // breaking the payment screen.\n            res.setHeader("Cache-Control", "private, max-age=30");\n            res.setHeader("Content-Type", sourceResponse.headers.get("content-type") || "image/png");\n            return res.send(sourceBuffer);\n        }\n\n        const points = [\n            code.location.topLeft,\n            code.location.topRight,\n            code.location.bottomLeft,\n            code.location.bottomRight\n        ];\n\n        const xs = points.map(p => Number(p.x));\n        const ys = points.map(p => Number(p.y));\n        const minX = Math.max(0, Math.floor(Math.min(...xs) - 18));\n        const minY = Math.max(0, Math.floor(Math.min(...ys) - 18));\n        const maxX = Math.min(info.width, Math.ceil(Math.max(...xs) + 18));\n        const maxY = Math.min(info.height, Math.ceil(Math.max(...ys) + 18));\n        const width = maxX - minX;\n        const height = maxY - minY;\n\n        if (width < 80 || height < 80) {\n            throw new Error("Detected QR region is too small.");\n        }\n\n        const cropped = await sharp(sourceBuffer)\n            .extract({ left: minX, top: minY, width, height })\n            .png()\n            .toBuffer();\n\n        res.setHeader("Cache-Control", "private, max-age=60");\n        res.setHeader("Content-Type", "image/png");\n        return res.send(cropped);\n    } catch (error) {\n        console.error("RAZORPAY QR IMAGE CROP FAILED:", error);\n        return res.status(502).send("Unable to prepare the QR image.");\n    }\n});\n\napp.get("/api/payment/qr/:purchaseId", async (req, res) => {
+/* Return only the actual QR region from Razorpay's portrait QR poster.
+ * The QR position is detected from the real returned image instead of using a
+ * fixed CSS crop, so it remains readable across Razorpay image layouts.
+ */
+app.get("/api/payment/qr-image/:purchaseId", async (req, res) => {
+    try {
+        const purchaseId = String(req.params.purchaseId || "").trim();
+        if (!purchaseId) return res.status(400).send("Purchase ID is required.");
+
+        const snapshot = await db.collection(COLLECTIONS.purchases).doc(purchaseId).get();
+        if (!snapshot.exists) return res.status(404).send("Payment session not found.");
+
+        const purchase = snapshot.data();
+        const sourceUrl = String(purchase.qrImageUrl || "").trim();
+        if (!sourceUrl) return res.status(404).send("QR image is not ready.");
+
+        const sourceResponse = await fetch(sourceUrl, {
+            redirect: "follow",
+            headers: { "User-Agent": "Mozilla/5.0", "Accept": "image/*,*/*;q=0.8" }
+        });
+        if (!sourceResponse.ok) {
+            return res.status(502).send(`Razorpay QR image request failed (${sourceResponse.status}).`);
+        }
+
+        const sourceBuffer = Buffer.from(await sourceResponse.arrayBuffer());
+        const decoded = await sharp(sourceBuffer).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+        const { data, info } = decoded;
+
+        const code = jsQR(new Uint8ClampedArray(data), info.width, info.height, {
+            inversionAttempts: "attemptBoth"
+        });
+
+        if (!code || !code.location) {
+            // Fallback: return the original image if detection fails rather than
+            // breaking the payment screen.
+            res.setHeader("Cache-Control", "private, max-age=30");
+            res.setHeader("Content-Type", sourceResponse.headers.get("content-type") || "image/png");
+            return res.send(sourceBuffer);
+        }
+
+        const points = [
+            code.location.topLeft,
+            code.location.topRight,
+            code.location.bottomLeft,
+            code.location.bottomRight
+        ];
+
+        const xs = points.map(p => Number(p.x));
+        const ys = points.map(p => Number(p.y));
+        const minX = Math.max(0, Math.floor(Math.min(...xs) - 18));
+        const minY = Math.max(0, Math.floor(Math.min(...ys) - 18));
+        const maxX = Math.min(info.width, Math.ceil(Math.max(...xs) + 18));
+        const maxY = Math.min(info.height, Math.ceil(Math.max(...ys) + 18));
+        const width = maxX - minX;
+        const height = maxY - minY;
+
+        if (width < 80 || height < 80) {
+            throw new Error("Detected QR region is too small.");
+        }
+
+        const cropped = await sharp(sourceBuffer)
+            .extract({ left: minX, top: minY, width, height })
+            .png()
+            .toBuffer();
+
+        res.setHeader("Cache-Control", "private, max-age=60");
+        res.setHeader("Content-Type", "image/png");
+        return res.send(cropped);
+    } catch (error) {
+        console.error("RAZORPAY QR IMAGE CROP FAILED:", error);
+        return res.status(502).send("Unable to prepare the QR image.");
+    }
+});
+
+app.get("/api/payment/qr/:purchaseId", async (req, res) => {
     try {
         const purchaseId = String(req.params.purchaseId || "").trim();
         if (!purchaseId) return res.status(400).json({ message: "Purchase ID is required." });
@@ -985,7 +1061,15 @@ app.post("/api/contact", async (req, res) => {
             to: ADMIN_EMAIL,
             replyTo: email,
             subject: `[GMC Contact] ${subject}`,
-            textPart: `New contact message from GMC website\n\nName: ${name}\nEmail: ${email}\nContact No.: ${phone || "Not provided"}\nSubject: ${subject}\n\nMessage:\n${message}`,
+            textPart: `New contact message from GMC website
+
+Name: ${name}
+Email: ${email}
+Contact No.: ${phone || "Not provided"}
+Subject: ${subject}
+
+Message:
+${message}`,
             htmlPart: `<!doctype html>
 <html>
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
