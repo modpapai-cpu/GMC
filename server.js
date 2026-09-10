@@ -1,3 +1,4 @@
+require("dotenv").config();
 const express = require("express");
 const crypto = require("crypto");
 const fs = require("fs");
@@ -74,7 +75,8 @@ const COLLECTIONS = {
     products: "products",
     contacts: "contacts",
     sessions: "admin_sessions",
-    otps: "admin_otps"
+    otps: "admin_otps",
+    purchases: "purchases"
 };
 
 function cleanEmail(value) {
@@ -190,6 +192,53 @@ function getRole(email) {
 const MAILJET_API_KEY = process.env.MAILJET_API_KEY || "";
 const MAILJET_SECRET_KEY = process.env.MAILJET_SECRET_KEY || "";
 const MAIL_FROM = process.env.MAIL_FROM || "modpapai@gmail.com";
+
+// Razorpay QR payments — keep these values only in Render/local environment variables.
+const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID || "";
+const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || "";
+const RAZORPAY_QR_TTL_SECONDS = Math.max(300, Number(process.env.RAZORPAY_QR_TTL_SECONDS || 900));
+
+function parsePlanAmount(value) {
+    const raw = String(value ?? "").trim();
+    const cleaned = raw.replace(/[^0-9.]/g, "");
+    if (!cleaned) return null;
+    const rupees = Number(cleaned);
+    if (!Number.isFinite(rupees) || rupees <= 0) return null;
+    const paise = Math.round(rupees * 100);
+    return paise > 0 ? paise : null;
+}
+
+async function razorpayRequest(endpoint, options = {}) {
+    if (!RAZORPAY_KEY_ID || !RAZORPAY_KEY_SECRET) {
+        throw new Error("Razorpay API credentials are not configured.");
+    }
+
+    const auth = Buffer.from(`${RAZORPAY_KEY_ID}:${RAZORPAY_KEY_SECRET}`).toString("base64");
+    const response = await fetch(`https://api.razorpay.com/v1${endpoint}`, {
+        ...options,
+        headers: {
+            "Authorization": `Basic ${auth}`,
+            "Content-Type": "application/json",
+            ...(options.headers || {})
+        }
+    });
+
+    const text = await response.text();
+    let data;
+    try {
+        data = JSON.parse(text);
+    } catch {
+        data = { error: { description: text || "Invalid Razorpay response." } };
+    }
+
+    if (!response.ok) {
+        const message = data?.error?.description || data?.error?.reason || `Razorpay API ${response.status}`;
+        throw new Error(message);
+    }
+
+    return data;
+}
+
 
 async function sendEmail({ to, subject, textPart, htmlPart, replyTo }) {
     if (!MAILJET_API_KEY || !MAILJET_SECRET_KEY) {
@@ -578,6 +627,7 @@ app.post("/api/products", requireAdmin, async (req, res) => {
             buttons: Array.isArray(body.buttons) && body.buttons.length
                 ? body.buttons.slice(0, 2)
                 : [{ text: String(body.buttonText || "GET PRODUCT"), link: String(body.buttonLink || "#") }],
+            buyEnabled: Boolean(body.buyEnabled),
             createdAt: new Date().toISOString()
         };
 
@@ -609,7 +659,8 @@ app.put("/api/products/:id", requireAdmin, async (req, res) => {
             plans: Array.isArray(body.plans) ? body.plans.slice(0, 20) : (old.plans || []),
             buttons: Array.isArray(body.buttons) && body.buttons.length
                 ? body.buttons.slice(0, 2)
-                : (old.buttons || [{ text: "GET PRODUCT", link: "#" }])
+                : (old.buttons || [{ text: "GET PRODUCT", link: "#" }]),
+            buyEnabled: typeof body.buyEnabled === "boolean" ? body.buyEnabled : Boolean(old.buyEnabled)
         };
 
         if (!updated.name) return res.status(400).json({ message: "Product name is required." });
@@ -632,6 +683,190 @@ app.delete("/api/products/:id", requireAdmin, async (req, res) => {
     } catch (error) {
         console.error("PRODUCT DELETE ERROR:", error);
         res.status(500).json({ message: "Unable to delete product." });
+    }
+});
+
+
+/* Razorpay — customer-facing QR payment flow.
+ * The amount is always read from the Firestore product on the server.
+ */
+app.post("/api/payment/qr", async (req, res) => {
+    try {
+        const productId = String(req.body?.productId || "").trim();
+        const planIndex = Number(req.body?.planIndex);
+        const customerName = String(req.body?.name || "").trim().slice(0, 120);
+        const customerEmail = cleanEmail(req.body?.email);
+
+        if (!productId) return res.status(400).json({ message: "Product is required." });
+        if (!Number.isInteger(planIndex) || planIndex < 0) {
+            return res.status(400).json({ message: "Invalid package selected." });
+        }
+        if (customerName.length < 2) {
+            return res.status(400).json({ message: "Enter your name." });
+        }
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customerEmail)) {
+            return res.status(400).json({ message: "Enter a valid email address." });
+        }
+        if (!RAZORPAY_KEY_ID || !RAZORPAY_KEY_SECRET) {
+            return res.status(503).json({ message: "Razorpay payment service is not configured on the server." });
+        }
+
+        const product = await getDocument(COLLECTIONS.products, productId);
+        if (!product) return res.status(404).json({ message: "Product not found." });
+
+        const plans = Array.isArray(product.plans) ? product.plans : [];
+        const selectedPlan = plans[planIndex];
+        if (!selectedPlan) return res.status(400).json({ message: "Selected package is not available." });
+
+        const amountPaise = parsePlanAmount(selectedPlan.price);
+        if (!amountPaise) {
+            return res.status(400).json({ message: "This package does not have a valid numeric price." });
+        }
+
+        const purchaseRef = db.collection(COLLECTIONS.purchases).doc();
+        const purchaseId = purchaseRef.id;
+        const now = Date.now();
+        const expiresAt = now + RAZORPAY_QR_TTL_SECONDS * 1000;
+        const closeBy = Math.floor(expiresAt / 1000);
+
+        await purchaseRef.set({
+            productId,
+            productName: String(product.name || ""),
+            planIndex,
+            planLabel: String(selectedPlan.label || `Package ${planIndex + 1}`),
+            amountPaise,
+            customerName,
+            customerEmail,
+            status: "creating",
+            createdAt: adminSdk.firestore.FieldValue.serverTimestamp(),
+            expiresAt
+        });
+
+        try {
+            const qr = await razorpayRequest("/payments/qr_codes", {
+                method: "POST",
+                body: JSON.stringify({
+                    type: "upi_qr",
+                    name: "GMC",
+                    usage: "single_use",
+                    fixed_amount: true,
+                    payment_amount: amountPaise,
+                    description: `${String(product.name || "GMC").slice(0, 70)} - ${String(selectedPlan.label || "").slice(0, 50)}`,
+                    close_by: closeBy,
+                    notes: {
+                        purchase_id: purchaseId,
+                        product_id: productId,
+                        customer_email: customerEmail
+                    }
+                })
+            });
+
+            const qrImageUrl = String(qr.image_url || qr.short_url || "").trim();
+            if (!qr.id || !qrImageUrl) {
+                throw new Error("Razorpay did not return a QR image URL.");
+            }
+
+            await purchaseRef.update({
+                status: "pending",
+                razorpayQrId: qr.id,
+                qrImageUrl,
+                qrStatus: qr.status || "active",
+                expiresAt
+            });
+
+            return res.json({
+                ok: true,
+                purchaseId,
+                qrId: qr.id,
+                qrImageUrl,
+                amount: amountPaise / 100,
+                amountPaise,
+                productName: String(product.name || ""),
+                planLabel: String(selectedPlan.label || ""),
+                customerEmail,
+                expiresAt
+            });
+        } catch (error) {
+            await purchaseRef.update({
+                status: "failed",
+                error: String(error.message || "Unable to create Razorpay QR.")
+            }).catch(() => {});
+            console.error("RAZORPAY QR CREATE FAILED:", error);
+            return res.status(502).json({
+                message: `Unable to create Razorpay QR: ${error.message || "Unknown Razorpay error."}`
+            });
+        }
+    } catch (error) {
+        console.error("PAYMENT QR REQUEST FAILED:", error);
+        return res.status(500).json({ message: "Unable to start payment." });
+    }
+});
+
+app.get("/api/payment/qr/:purchaseId", async (req, res) => {
+    try {
+        const purchaseId = String(req.params.purchaseId || "").trim();
+        if (!purchaseId) return res.status(400).json({ message: "Purchase ID is required." });
+
+        const ref = db.collection(COLLECTIONS.purchases).doc(purchaseId);
+        const snapshot = await ref.get();
+        if (!snapshot.exists) return res.status(404).json({ message: "Payment session not found." });
+
+        const purchase = snapshot.data();
+        if (purchase.status === "paid") {
+            return res.json({
+                ok: true, status: "paid",
+                amount: Number(purchase.amountPaise || 0) / 100,
+                productName: purchase.productName || "",
+                planLabel: purchase.planLabel || "",
+                paymentId: purchase.paymentId || null
+            });
+        }
+
+        if (Date.now() >= Number(purchase.expiresAt || 0)) {
+            if (purchase.status !== "expired") await ref.update({ status: "expired" }).catch(() => {});
+            return res.json({ ok: true, status: "expired" });
+        }
+
+        if (!purchase.razorpayQrId) {
+            return res.status(409).json({ message: "Payment QR is not ready yet." });
+        }
+
+        const payments = await razorpayRequest(
+            `/payments/qr_codes/${encodeURIComponent(purchase.razorpayQrId)}/payments?count=10`,
+            { method: "GET" }
+        );
+
+        const items = Array.isArray(payments.items) ? payments.items : [];
+        const captured = items.find(item =>
+            item && item.status === "captured" &&
+            Number(item.amount) === Number(purchase.amountPaise)
+        );
+
+        if (captured) {
+            await ref.update({
+                status: "paid",
+                paymentId: captured.id,
+                paidAt: adminSdk.firestore.FieldValue.serverTimestamp()
+            });
+
+            return res.json({
+                ok: true,
+                status: "paid",
+                amount: Number(purchase.amountPaise || 0) / 100,
+                productName: purchase.productName || "",
+                planLabel: purchase.planLabel || "",
+                paymentId: captured.id
+            });
+        }
+
+        return res.json({
+            ok: true,
+            status: "pending",
+            amount: Number(purchase.amountPaise || 0) / 100
+        });
+    } catch (error) {
+        console.error("RAZORPAY QR STATUS FAILED:", error);
+        return res.status(502).json({ message: `Unable to check payment: ${error.message || "Unknown error."}` });
     }
 });
 

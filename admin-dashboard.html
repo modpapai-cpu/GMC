@@ -117,6 +117,13 @@ nav{height:78px;padding:0 7%;display:flex;align-items:center;justify-content:spa
 <div class="field full"><label>PRODUCT BUTTONS</label>
 <div class="button-editor">
     <div class="field">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+            <input id="buyEnabled" type="checkbox" style="width:auto;">
+            SHOW BUY BUTTON
+        </label>
+        <div class="button-editor-note">Adds a BUY button after the custom buttons and opens the payment flow.</div>
+    </div>
+    <div class="field">
         <label>NUMBER OF BUTTONS</label>
         <select id="buttonCount" onchange="renderButtonEditor()">
             <option value="1">1 BUTTON</option>
@@ -309,6 +316,7 @@ function resetForm(){
     $("form").reset();
     $("productId").value="";
     $("buttonCount").value="1";
+    $("buyEnabled").checked=false;
     renderButtonEditor([{text:"GET PRODUCT",link:"https://discord.com/users/764062307575398431"}]);
     $("contentType").value="plans";
     $("imageUrl").value="";
@@ -336,6 +344,7 @@ function openEdit(id){
     $("imageUrl").value=p.imageUrl||"";
     const editButtons=getButtons(p);
     $("buttonCount").value=String(editButtons.length>1?2:1);
+    $("buyEnabled").checked=Boolean(p.buyEnabled);
     renderButtonEditor(editButtons);
     $("plans").innerHTML="";
     (p.plans||[]).forEach(x=>addPlan(x.label,x.price));
@@ -394,7 +403,8 @@ async function saveProduct(e){
         contentType:$("contentType").value === "image" ? "image" : "plans",
         imageUrl:$("imageUrl").value.trim(),
         plans:$("contentType").value === "plans" ? collectPlans() : [],
-        buttons:collectButtons()
+        buttons:collectButtons(),
+        buyEnabled:$("buyEnabled").checked
     };
     try{
         const id=$("productId").value;

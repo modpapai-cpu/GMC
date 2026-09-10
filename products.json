@@ -30,7 +30,8 @@
       }
     ],
     "contentType": "plans",
-    "imageUrl": ""
+    "imageUrl": "",
+    "buyEnabled": true
   },
   {
     "id": "aim-silent",
@@ -67,7 +68,8 @@
       }
     ],
     "contentType": "plans",
-    "imageUrl": ""
+    "imageUrl": "",
+    "buyEnabled": true
   },
   {
     "id": "custom-panel",
@@ -100,6 +102,7 @@
       }
     ],
     "contentType": "plans",
-    "imageUrl": ""
+    "imageUrl": "",
+    "buyEnabled": false
   }
 ]

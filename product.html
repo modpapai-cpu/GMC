@@ -792,6 +792,66 @@
                 text-align: center;
             }
         }
+    
+/* ================= BUY / RAZORPAY MODAL ================= */
+.buy-modal.hidden { display:none !important; }
+.buy-modal {
+    position:fixed; inset:0; z-index:9999; display:flex; align-items:center; justify-content:center;
+    padding:20px; background:rgba(0,0,0,.78); backdrop-filter:blur(8px);
+}
+.buy-modal-box {
+    width:min(520px,100%); max-height:92vh; overflow:auto; background:#0b0b0b;
+    border:1px solid rgba(255,0,0,.65); border-radius:18px; box-shadow:0 20px 80px rgba(0,0,0,.8),0 0 40px rgba(255,0,0,.10);
+}
+.buy-modal-head { display:flex; align-items:center; justify-content:space-between; padding:24px 26px 8px; }
+.buy-modal-head h2 { margin:0; font-size:22px; color:#fff; letter-spacing:.5px; }
+.buy-modal-close { border:0; background:transparent; color:#777; font-size:27px; cursor:pointer; line-height:1; }
+.buy-modal-close:hover { color:#fff; }
+.buy-step { padding:10px 26px 26px; }
+.buy-step-title { color:#ff2222; font-weight:900; font-size:12px; letter-spacing:1px; margin-bottom:8px; }
+.buy-step-note { color:#777; font-size:11px; line-height:1.7; margin-bottom:18px; }
+.buy-field { margin-bottom:14px; }
+.buy-field label { display:block; color:#aaa; font-size:10px; margin-bottom:7px; letter-spacing:.6px; }
+.buy-field input {
+    width:100%; box-sizing:border-box; padding:14px; border-radius:10px; border:1px solid #292929;
+    background:#111; color:#fff; outline:0; font-size:13px;
+}
+.buy-field input:focus { border-color:#f22; box-shadow:0 0 0 2px rgba(255,0,0,.08); }
+.buy-primary,.buy-secondary {
+    width:100%; border-radius:10px; padding:13px 14px; cursor:pointer; font-weight:900; font-size:12px;
+}
+.buy-primary { border:1px solid #f22; background:#f10b0b; color:#fff; }
+.buy-primary:hover { background:#ff2020; }
+.buy-primary:disabled { opacity:.55; cursor:wait; }
+.buy-secondary { margin-top:8px; border:1px solid #292929; background:#0e0e0e; color:#aaa; }
+.buy-secondary:hover { color:#fff; border-color:#444; }
+.buy-plans { display:grid; gap:9px; margin-bottom:16px; }
+.buy-plan {
+    display:flex; justify-content:space-between; align-items:center; width:100%; box-sizing:border-box;
+    padding:14px; border-radius:10px; border:1px solid #292929; background:#0f0f0f; color:#fff;
+    cursor:pointer; text-align:left;
+}
+.buy-plan:hover,.buy-plan.selected { border-color:#f22; background:#170505; }
+.buy-plan-label { font-weight:800; font-size:13px; }
+.buy-plan-price { color:#ff2828; font-weight:900; font-size:13px; }
+.buy-error { min-height:18px; color:#ff3333; font-size:10px; line-height:1.5; margin:7px 0 4px; }
+.buy-summary {
+    border:1px solid #242424; border-radius:11px; padding:13px; background:#0f0f0f; margin-bottom:18px;
+}
+.buy-summary-row { display:flex; justify-content:space-between; gap:20px; color:#777; font-size:10px; padding:4px 0; }
+.buy-summary-row strong { color:#ddd; text-align:right; font-size:11px; max-width:70%; overflow-wrap:anywhere; }
+.buy-amount { text-align:center; color:#fff; font-size:24px; font-weight:950; margin:12px 0 4px; }
+.buy-status { text-align:center; color:#aaa; font-size:10px; min-height:18px; margin-bottom:12px; }
+.buy-qr-wrap { width:280px; height:280px; margin:0 auto 16px; border-radius:14px; background:#fff; display:flex; align-items:center; justify-content:center; overflow:hidden; }
+.buy-qr-wrap img { width:100%; height:100%; object-fit:contain; display:block; }
+.buy-qr-link { display:block; text-align:center; color:#ff3333; font-size:10px; margin-bottom:10px; }
+.buy-success { text-align:center; color:#33e68a; font-weight:900; font-size:14px; padding:8px 0 12px; }
+.product-buttons.three { grid-template-columns:repeat(3,minmax(0,1fr)); }
+@media(max-width:600px){
+    .buy-modal{padding:8px}.buy-modal-box{border-radius:14px}.buy-modal-head{padding:20px 20px 5px}.buy-step{padding:10px 20px 22px}
+    .buy-qr-wrap{width:240px;height:240px}
+}
+
     </style>
 </head>
 
@@ -883,6 +943,57 @@
 
     <div class="image-lightbox" id="imageLightbox" aria-hidden="true"><button class="close" type="button" aria-label="Close image">&times;</button><img id="lightboxImage" src="" alt="Product preview"></div>
 
+
+    <!-- BUY / RAZORPAY FLOW -->
+    <div class="buy-modal hidden" id="buyModal" aria-hidden="true">
+        <div class="buy-modal-box">
+            <div class="buy-modal-head">
+                <h2 id="buyModalTitle">BUY</h2>
+                <button class="buy-modal-close" id="buyClose" type="button" aria-label="Close">&times;</button>
+            </div>
+
+            <section class="buy-step" id="buyStep1">
+                <div class="buy-step-title">CUSTOMER DETAILS</div>
+                <div class="buy-step-note">Enter your name and email address to continue.</div>
+                <div class="buy-field">
+                    <label>NAME</label>
+                    <input id="buyName" type="text" autocomplete="name" maxlength="120" placeholder="Your name">
+                </div>
+                <div class="buy-field">
+                    <label>EMAIL</label>
+                    <input id="buyEmail" type="email" autocomplete="email" maxlength="160" placeholder="you@example.com">
+                </div>
+                <div class="buy-error" id="buyError1"></div>
+                <button class="buy-primary" id="buyContinue1" type="button">CONTINUE</button>
+            </section>
+
+            <section class="buy-step" id="buyStep2" hidden>
+                <div class="buy-step-title">CHOOSE PACKAGE</div>
+                <div class="buy-step-note">Choose the package you want. The amount shown here is the amount that will be locked into the Razorpay QR.</div>
+                <div class="buy-plans" id="buyPlanOptions"></div>
+                <div class="buy-error" id="buyError2"></div>
+                <button class="buy-primary" id="buyContinue2" type="button">CONTINUE TO PAYMENT</button>
+                <button class="buy-secondary" id="buyBack1" type="button">BACK</button>
+            </section>
+
+            <section class="buy-step" id="buyStep3" hidden>
+                <div class="buy-step-title">SCAN &amp; PAY</div>
+                <div class="buy-summary">
+                    <div class="buy-summary-row"><span>Product</span><strong id="buyQrProduct">—</strong></div>
+                    <div class="buy-summary-row"><span>Package</span><strong id="buyQrPackage">—</strong></div>
+                    <div class="buy-summary-row"><span>Email</span><strong id="buyQrEmail">—</strong></div>
+                </div>
+                <div class="buy-amount" id="buyQrAmount">₹0</div>
+                <div class="buy-status" id="buyQrStatus">Creating Razorpay QR...</div>
+                <div class="buy-qr-wrap" id="buyQrWrap"><img id="buyQrImage" alt="Razorpay payment QR"></div>
+                <a class="buy-qr-link" id="buyQrLink" href="#" target="_blank" rel="noopener noreferrer" hidden>OPEN QR</a>
+                <div class="buy-success" id="buySuccess" hidden>PAYMENT RECEIVED ✓</div>
+                <div class="buy-error" id="buyError3"></div>
+                <button class="buy-secondary" id="buyCloseAfter" type="button">CLOSE</button>
+            </section>
+        </div>
+    </div>
+
     <script>
     function escapeHtml(value) {
         return String(value ?? "")
@@ -894,18 +1005,25 @@
     }
 
     function getButtons(product) {
+        let buttons;
         if (Array.isArray(product.buttons) && product.buttons.length) {
-            return product.buttons.slice(0, 2).map(button => ({
+            buttons = product.buttons.slice(0, 2).map(button => ({
                 text: String(button.text || "GET PRODUCT"),
-                link: String(button.link || "#")
+                link: String(button.link || "#"),
+                isBuy: false
             }));
+        } else {
+            buttons = [{
+                text: String(product.buttonText || "CONTACT US"),
+                link: String(product.buttonLink || "https://discord.com/users/764062307575398431"),
+                isBuy: false
+            }];
         }
 
-        // Backward compatibility for existing products.
-        return [{
-            text: String(product.buttonText || "CONTACT US"),
-            link: String(product.buttonLink || "https://discord.com/users/764062307575398431")
-        }];
+        if (product.buyEnabled) {
+            buttons.push({ text: "BUY", link: "#", isBuy: true });
+        }
+        return buttons;
     }
 
     async function loadProducts() {
@@ -916,6 +1034,7 @@
             if (!response.ok) throw new Error("Could not load products.");
 
             const products = await response.json();
+            buyProducts = products;
 
             if (!products.length) {
                 container.innerHTML = `
@@ -953,12 +1072,11 @@
 
                         ${content}
 
-                        <div class="product-buttons ${((product.buttons || []).length > 1) ? "two" : ""}">
-                            ${getButtons(product).map(button => `
-                                <a href="${escapeHtml(button.link)}" class="buy-btn">
-                                    ${escapeHtml(button.text)}
-                                </a>
-                            `).join("")}
+                        <div class="product-buttons ${getButtons(product).length > 1 ? "two" : ""} ${getButtons(product).length > 2 ? "three" : ""}">
+                            ${getButtons(product).map((button, index) => button.isBuy
+                                ? `<a href="#" class="buy-btn js-buy-product" data-product-id="${escapeHtml(product.id)}">${escapeHtml(button.text)}</a>`
+                                : `<a href="${escapeHtml(button.link)}" class="buy-btn">${escapeHtml(button.text)}</a>`
+                            ).join("")}
                         </div>
                     </article>
                 `;
@@ -977,7 +1095,275 @@
         }
     }
 
+
+    // ================= BUY / RAZORPAY FLOW =================
+    let buyProducts = [];
+    let buyCurrentProduct = null;
+    let buyCustomer = { name: "", email: "" };
+    let buySelectedPlanIndex = -1;
+    let buyPurchaseId = "";
+    let buyPollTimer = null;
+
+    const buyModal = document.getElementById("buyModal");
+    const buyStep1 = document.getElementById("buyStep1");
+    const buyStep2 = document.getElementById("buyStep2");
+    const buyStep3 = document.getElementById("buyStep3");
+    const buyName = document.getElementById("buyName");
+    const buyEmail = document.getElementById("buyEmail");
+    const buyPlanOptions = document.getElementById("buyPlanOptions");
+    const buyError1 = document.getElementById("buyError1");
+    const buyError2 = document.getElementById("buyError2");
+    const buyError3 = document.getElementById("buyError3");
+    const buyContinue1 = document.getElementById("buyContinue1");
+    const buyContinue2 = document.getElementById("buyContinue2");
+    const buyBack1 = document.getElementById("buyBack1");
+    const buyClose = document.getElementById("buyClose");
+    const buyCloseAfter = document.getElementById("buyCloseAfter");
+    const buyQrProduct = document.getElementById("buyQrProduct");
+    const buyQrPackage = document.getElementById("buyQrPackage");
+    const buyQrEmail = document.getElementById("buyQrEmail");
+    const buyQrAmount = document.getElementById("buyQrAmount");
+    const buyQrStatus = document.getElementById("buyQrStatus");
+    const buyQrImage = document.getElementById("buyQrImage");
+    const buyQrLink = document.getElementById("buyQrLink");
+    const buySuccess = document.getElementById("buySuccess");
+    const buyQrWrap = document.getElementById("buyQrWrap");
+
+    function clearBuyErrors() {
+        buyError1.textContent = "";
+        buyError2.textContent = "";
+        buyError3.textContent = "";
+    }
+
+    function stopBuyPolling() {
+        if (buyPollTimer) {
+            clearInterval(buyPollTimer);
+            buyPollTimer = null;
+        }
+    }
+
+    function showBuyStep(n) {
+        buyStep1.hidden = n !== 1;
+        buyStep2.hidden = n !== 2;
+        buyStep3.hidden = n !== 3;
+    }
+
+    function resetBuyModal() {
+        stopBuyPolling();
+        buyCurrentProduct = null;
+        buySelectedPlanIndex = -1;
+        buyPurchaseId = "";
+        clearBuyErrors();
+        buyName.value = "";
+        buyEmail.value = "";
+        buyPlanOptions.innerHTML = "";
+        buyQrProduct.textContent = "—";
+        buyQrPackage.textContent = "—";
+        buyQrEmail.textContent = "—";
+        buyQrAmount.textContent = "₹0";
+        buyQrStatus.textContent = "";
+        buyQrImage.removeAttribute("src");
+        buyQrLink.hidden = true;
+        buyQrLink.href = "#";
+        buySuccess.hidden = true;
+        buyQrWrap.style.display = "flex";
+        buyContinue1.disabled = false;
+        buyContinue1.textContent = "CONTINUE";
+        buyContinue2.disabled = false;
+        buyContinue2.textContent = "CONTINUE TO PAYMENT";
+        showBuyStep(1);
+    }
+
+    function openBuyModal(product) {
+        resetBuyModal();
+        buyCurrentProduct = product;
+        document.getElementById("buyModalTitle").textContent = `BUY ${String(product.name || "").toUpperCase()}`;
+        buyModal.classList.remove("hidden");
+        buyModal.setAttribute("aria-hidden", "false");
+        document.body.classList.add("lightbox-open");
+        setTimeout(() => buyName.focus(), 50);
+    }
+
+    function closeBuyModal() {
+        stopBuyPolling();
+        buyModal.classList.add("hidden");
+        buyModal.setAttribute("aria-hidden", "true");
+        document.body.classList.remove("lightbox-open");
+    }
+
+    function renderBuyPlans() {
+        const plans = Array.isArray(buyCurrentProduct?.plans) ? buyCurrentProduct.plans : [];
+        buyPlanOptions.innerHTML = plans.map((plan, index) => `
+            <button type="button" class="buy-plan ${index === buySelectedPlanIndex ? "selected" : ""}" data-plan-index="${index}">
+                <span class="buy-plan-label">${escapeHtml(plan.label || `Package ${index + 1}`)}</span>
+                <span class="buy-plan-price">${escapeHtml(plan.price || "")}</span>
+            </button>
+        `).join("");
+
+        buyPlanOptions.querySelectorAll(".buy-plan").forEach(button => {
+            button.addEventListener("click", () => {
+                buySelectedPlanIndex = Number(button.dataset.planIndex);
+                buyPlanOptions.querySelectorAll(".buy-plan").forEach(x => x.classList.remove("selected"));
+                button.classList.add("selected");
+                buyError2.textContent = "";
+            });
+        });
+    }
+
+    buyContinue1.addEventListener("click", () => {
+        const name = buyName.value.trim();
+        const email = buyEmail.value.trim().toLowerCase();
+
+        if (name.length < 2) {
+            buyError1.textContent = "Please enter your name.";
+            return;
+        }
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+            buyError1.textContent = "Please enter a valid email address.";
+            return;
+        }
+
+        buyCustomer = { name, email };
+        buyError1.textContent = "";
+        buySelectedPlanIndex = -1;
+        renderBuyPlans();
+        showBuyStep(2);
+    });
+
+    buyBack1.addEventListener("click", () => {
+        buyError2.textContent = "";
+        showBuyStep(1);
+    });
+
+    async function createRazorpayQr() {
+        if (!buyCurrentProduct || buySelectedPlanIndex < 0) {
+            buyError2.textContent = "Please select a package.";
+            return;
+        }
+
+        const selectedPlan = (buyCurrentProduct.plans || [])[buySelectedPlanIndex];
+        if (!selectedPlan) {
+            buyError2.textContent = "Selected package is not available.";
+            return;
+        }
+
+        buyError2.textContent = "";
+        buyContinue2.disabled = true;
+        buyContinue2.textContent = "CREATING QR...";
+
+        try {
+            const response = await fetch("/api/payment/qr", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                cache: "no-store",
+                body: JSON.stringify({
+                    productId: buyCurrentProduct.id,
+                    planIndex: buySelectedPlanIndex,
+                    name: buyCustomer.name,
+                    email: buyCustomer.email
+                })
+            });
+
+            const data = await response.json().catch(() => ({ message: "Server returned an invalid response." }));
+
+            if (!response.ok || !data.ok) {
+                throw new Error(data.message || `Payment server error (${response.status}).`);
+            }
+
+            // Do not open Step 3 until the server has actually created a QR.
+            if (!data.qrImageUrl || !data.purchaseId || !Number(data.amount)) {
+                throw new Error("Razorpay QR was not created correctly.");
+            }
+
+            buyPurchaseId = data.purchaseId;
+            buyQrProduct.textContent = data.productName || buyCurrentProduct.name || "—";
+            buyQrPackage.textContent = data.planLabel || selectedPlan.label || "—";
+            buyQrEmail.textContent = data.customerEmail || buyCustomer.email || "—";
+            buyQrAmount.textContent = `₹${Number(data.amount).toLocaleString("en-IN")}`;
+            buyQrStatus.textContent = "Scan the QR with any supported UPI app.";
+            buyQrImage.src = data.qrImageUrl;
+            buyQrLink.href = data.qrImageUrl;
+            buyQrLink.hidden = false;
+            buySuccess.hidden = true;
+            buyQrWrap.style.display = "flex";
+
+            showBuyStep(3);
+            startBuyPolling();
+        } catch (error) {
+            console.error("BUY PAYMENT ERROR:", error);
+            buyError2.textContent = error.message || "Unable to create Razorpay QR.";
+        } finally {
+            buyContinue2.disabled = false;
+            buyContinue2.textContent = "CONTINUE TO PAYMENT";
+        }
+    }
+
+    buyContinue2.addEventListener("click", createRazorpayQr);
+
+    async function checkBuyPayment() {
+        if (!buyPurchaseId) return;
+
+        try {
+            const response = await fetch(`/api/payment/qr/${encodeURIComponent(buyPurchaseId)}`, {
+                cache: "no-store"
+            });
+            const data = await response.json().catch(() => ({}));
+
+            if (!response.ok) {
+                buyQrStatus.textContent = data.message || "Checking payment...";
+                return;
+            }
+
+            if (data.status === "paid") {
+                stopBuyPolling();
+                buyQrStatus.textContent = "Payment verified successfully.";
+                buySuccess.hidden = false;
+                buyQrWrap.style.display = "none";
+                buyQrLink.hidden = true;
+                buyCloseAfter.textContent = "CLOSE";
+                return;
+            }
+
+            if (data.status === "expired") {
+                stopBuyPolling();
+                buyQrStatus.textContent = "This QR has expired. Close and start a new payment.";
+                buyQrWrap.style.display = "none";
+                buyQrLink.hidden = true;
+                return;
+            }
+
+            buyQrStatus.textContent = "Waiting for payment...";
+        } catch (error) {
+            console.error("PAYMENT STATUS ERROR:", error);
+        }
+    }
+
+    function startBuyPolling() {
+        stopBuyPolling();
+        checkBuyPayment();
+        buyPollTimer = setInterval(checkBuyPayment, 3000);
+    }
+
+    buyClose.addEventListener("click", closeBuyModal);
+    buyCloseAfter.addEventListener("click", closeBuyModal);
+    buyModal.addEventListener("click", event => {
+        if (event.target === buyModal) closeBuyModal();
+    });
+    document.addEventListener("keydown", event => {
+        if (event.key === "Escape" && !buyModal.classList.contains("hidden")) closeBuyModal();
+    });
+
+
     loadProducts();
+
+
+    document.getElementById("products-container").addEventListener("click", event => {
+        const buyButton = event.target.closest(".js-buy-product");
+        if (!buyButton) return;
+        event.preventDefault();
+        const product = buyProducts.find(p => String(p.id) === String(buyButton.dataset.productId));
+        if (product) openBuyModal(product);
+    });
 
     // Live product search: filters the products already loaded from the API.
     const productSearch = document.getElementById("productSearch");
