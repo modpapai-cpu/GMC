@@ -643,12 +643,44 @@
         }
 
         /* ================= BOTH DISPLAY SLIDESHOW ================= */
-        .product-slideshow { position:relative; min-height:180px; }
-        .product-slideshow .slide-panel { width:100%; transition:opacity .45s ease, transform .45s ease; }
-        .product-slideshow .slide-image { display:block; }
-        .product-slideshow .slide-plans { display:none; }
-        .product-slideshow.show-plans .slide-image { display:none; }
-        .product-slideshow.show-plans .slide-plans { display:block; }
+        .product-slideshow {
+            position:relative;
+            display:grid;
+            grid-template-columns:minmax(0,1fr);
+        }
+        .product-slideshow .slide-panel {
+            grid-area:1 / 1;
+            width:100%;
+            opacity:0;
+            visibility:hidden;
+            pointer-events:none;
+            transform:translateX(18px);
+            transition:opacity .65s ease, transform .65s cubic-bezier(.22,.61,.36,1), visibility 0s linear .65s;
+        }
+        .product-slideshow .slide-image {
+            opacity:1;
+            visibility:visible;
+            pointer-events:auto;
+            transform:translateX(0);
+            transition-delay:0s;
+        }
+        .product-slideshow.show-plans .slide-image {
+            opacity:0;
+            visibility:hidden;
+            pointer-events:none;
+            transform:translateX(-18px);
+            transition-delay:0s;
+        }
+        .product-slideshow .slide-plans {
+            transform:translateX(18px);
+        }
+        .product-slideshow.show-plans .slide-plans {
+            opacity:1;
+            visibility:visible;
+            pointer-events:auto;
+            transform:translateX(0);
+            transition-delay:0s;
+        }
 
         /* ================= BUTTON ================= */
 
@@ -1123,6 +1155,7 @@
             });
 
             document.querySelectorAll(".product-slideshow").forEach(slideshow => {
+                // BOTH mode: keep each panel mounted and smoothly cross-fade/slide every 5 seconds.
                 setInterval(() => slideshow.classList.toggle("show-plans"), 5000);
             });
 
