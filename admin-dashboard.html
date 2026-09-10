@@ -47,6 +47,9 @@ nav{height:78px;padding:0 7%;display:flex;align-items:center;justify-content:spa
     }
 }
 
+
+.license-management{margin-top:18px;padding:16px;border:1px solid #202020;border-radius:12px;background:rgba(255,255,255,.015)}
+.license-management-title{font-size:11px;font-weight:900;color:#fff;letter-spacing:.7px;margin-bottom:12px}.license-plan{border:1px solid #222;border-radius:10px;padding:12px;margin-bottom:10px}.license-plan-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px}.license-plan-name{font-size:11px;font-weight:800;color:#ddd}.license-plan-count{font-size:9px;color:#777}.license-list{display:flex;flex-direction:column;gap:6px;margin-bottom:9px}.license-row{display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:7px;background:#0b0b0b;border:1px solid #181818}.license-row code{flex:1;min-width:0;color:#ccc;font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.license-remove{width:27px;height:27px;padding:0;border:1px solid rgba(255,40,40,.25);border-radius:6px;background:rgba(255,0,0,.07);color:#ff4141;cursor:pointer;font-size:15px}.license-empty{font-size:9px;color:#555;padding:3px 0 8px}.add-license-btn{width:100%;padding:8px 10px;border-radius:7px;border:1px dashed #333;background:#0c0c0c;color:#aaa;font-size:9px;font-weight:800;cursor:pointer}.add-license-btn:hover{border-color:#666;color:#fff}.license-note{margin-top:10px;font-size:9px;line-height:1.6;color:#555}
 </style>
 </head>
 <body>
@@ -156,6 +159,16 @@ nav{height:78px;padding:0 7%;display:flex;align-items:center;justify-content:spa
         <div class="image-preview" id="imagePreview"><span>Image preview will appear here</span></div>
     </div>
 </div>
+    <div class="field" style="margin-top:18px">
+        <label>FILE LINK</label>
+        <input id="downloadUrl" type="url" placeholder="Direct download link for the product file">
+        <div class="license-note">This is one common file link. All plans can use the same file.</div>
+    </div>
+    <div class="license-management" id="licenseManagementWrap">
+        <div class="license-management-title">LICENSE MANAGEMENT</div>
+        <div id="licenseManagement"></div>
+        <div class="license-note">License keys are stored separately for each plan. Duplicate keys are blocked.</div>
+    </div>
 </div>
 </div>
 <div id="formMsg" class="form-msg"></div>
@@ -334,53 +347,45 @@ function openAdd(){
 }
 
 function openEdit(id){
-    const p=products.find(x=>x.id===id);
-    if(!p)return;
-    $("productId").value=p.id;
-    $("icon").value=p.icon||"📦";
-    $("tag").value=p.tag||"NEW";
-    $("name").value=p.name||"";
-    $("description").value=p.description||"";
-    $("contentType").value=p.contentType === "both" ? "both" : (p.contentType === "image" ? "image" : "plans");
-    $("imageUrl").value=p.imageUrl||"";
-    const editButtons=getButtons(p);
-    $("buttonCount").value=String(editButtons.length>1?2:1);
-    $("buyEnabled").checked=Boolean(p.buyEnabled);
-    renderButtonEditor(editButtons);
-    $("plans").innerHTML="";
-    (p.plans||[]).forEach(x=>addPlan(x.label,x.price));
-    if(!(p.plans||[]).length)addPlan();
-    renderContentEditor();
-    updateImagePreview();
-    $("formMsg").textContent="";
-    $("modalTitle").textContent="EDIT PRODUCT";
-    $("modal").classList.remove("hidden");
+    const p=products.find(x=>x.id===id);if(!p)return;
+    $("productId").value=p.id;$("icon").value=p.icon||"📦";$("tag").value=p.tag||"NEW";$("name").value=p.name||"";
+    $("description").value=p.description||"";$("contentType").value=p.contentType==="both"?"both":(p.contentType==="image"?"image":"plans");
+    $("imageUrl").value=p.imageUrl||"";$("downloadUrl").value=p.downloadUrl||"";const editButtons=getButtons(p);$("buttonCount").value=String(editButtons.length>1?2:1);
+    $("buyEnabled").checked=Boolean(p.buyEnabled);renderButtonEditor(editButtons);$("plans").innerHTML="";
+    (p.plans||[]).forEach(x=>addPlan(x.label,x.price,x.id,x.licenses||[]));if(!(p.plans||[]).length)addPlan();
+    renderContentEditor();updateImagePreview();renderLicenseManagement();$("formMsg").textContent="";
+    $("modalTitle").textContent="EDIT PRODUCT";$("modal").classList.remove("hidden");
 }
-
 function closeModal(){$("modal").classList.add("hidden")}
-
-function addPlan(label="",price=""){
-    const div=document.createElement("div");
-    div.className="plan-edit";
+function newPlanId(){return "plan_"+Date.now().toString(36)+"_"+Math.random().toString(36).slice(2,9)}
+function addPlan(label="",price="",id="",licenses=[]){
+    const div=document.createElement("div");div.className="plan-edit";div.dataset.planId=id||newPlanId();div.dataset.licenses=JSON.stringify(Array.isArray(licenses)?licenses:[]);
     div.innerHTML=`<input class="plan-label" placeholder="1 Week" value="${esc(label)}"><input class="plan-price" placeholder="₹299" value="${esc(price)}"><button type="button" class="remove-plan">×</button>`;
-    div.querySelector(".remove-plan").onclick=()=>div.remove();
-    $("plans").appendChild(div);
+    div.querySelector(".remove-plan").onclick=()=>{const a=JSON.parse(div.dataset.licenses||"[]");if(a.length&&!confirm("This plan has license keys. Remove the plan and its license list?"))return;div.remove();renderLicenseManagement()};
+    $("plans").appendChild(div);div.querySelector(".plan-label").addEventListener("input",renderLicenseManagement);renderLicenseManagement();
 }
-
-function collectPlans(){
-    return [...document.querySelectorAll(".plan-edit")].map(row=>({
-        label:row.querySelector(".plan-label").value.trim(),
-        price:row.querySelector(".plan-price").value.trim()
-    })).filter(x=>x.label||x.price);
+function collectPlans(){return [...document.querySelectorAll(".plan-edit")].map(row=>({id:row.dataset.planId||newPlanId(),label:row.querySelector(".plan-label").value.trim(),price:row.querySelector(".plan-price").value.trim(),licenses:JSON.parse(row.dataset.licenses||"[]")})).filter(x=>x.label||x.price)}
+function renderLicenseManagement(){
+    const box=$("licenseManagement");if(!box)return;const rows=[...document.querySelectorAll(".plan-edit")];
+    if(!rows.length){box.innerHTML='<div class="license-empty">Add a plan above to manage its license keys.</div>';return}
+    box.innerHTML=rows.map((row,i)=>{const label=row.querySelector(".plan-label")?.value.trim()||`Plan ${i+1}`,a=JSON.parse(row.dataset.licenses||"[]");
+      return `<div class="license-plan"><div class="license-plan-head"><div class="license-plan-name">${esc(label)}</div><div class="license-plan-count">${a.length} AVAILABLE</div></div><div class="license-list">${a.length?a.map((key,k)=>`<div class="license-row"><code>${esc(key)}</code><button type="button" class="license-remove" title="Remove license" onclick="removeLicenseFromPlan(${i},${k})">×</button></div>`).join(""):'<div class="license-empty">No license keys added.</div>'}</div><button type="button" class="add-license-btn" onclick="promptAddLicense(${i})">+ ADD LICENSE</button></div>`;
+    }).join("");
 }
-
+function promptAddLicense(planIndex){
+    const rows=[...document.querySelectorAll(".plan-edit")],row=rows[planIndex];if(!row)return;const label=row.querySelector(".plan-label")?.value.trim()||`Plan ${planIndex+1}`;
+    const key=window.prompt(`Add license key for "${label}"`);if(key===null)return;const clean=key.trim();if(!clean){alert("License key cannot be empty.");return}
+    const a=JSON.parse(row.dataset.licenses||"[]");if(a.some(x=>String(x).toLowerCase()===clean.toLowerCase())){alert("This license key is already added.");return}
+    a.push(clean);row.dataset.licenses=JSON.stringify(a);renderLicenseManagement();
+}
+function removeLicenseFromPlan(planIndex,keyIndex){
+    const rows=[...document.querySelectorAll(".plan-edit")],row=rows[planIndex];if(!row)return;const a=JSON.parse(row.dataset.licenses||"[]");if(!a[keyIndex])return;
+    if(!confirm("Remove this license key?"))return;a.splice(keyIndex,1);row.dataset.licenses=JSON.stringify(a);renderLicenseManagement();
+}
 function renderContentEditor(){
-    const type=$("contentType").value;
-    $("plansEditorWrap").style.display=(type==="plans" || type==="both")?"block":"none";
-    $("imageEditorWrap").classList.toggle("hidden",type!=="image" && type!=="both");
-    if(type==="image" || type==="both") updateImagePreview();
+    const type=$("contentType").value;$("plansEditorWrap").style.display=(type==="plans"||type==="both")?"block":"none";
+    $("imageEditorWrap").classList.toggle("hidden",type!=="image"&&type!=="both");if(type==="image"||type==="both")updateImagePreview();renderLicenseManagement();
 }
-
 function updateImagePreview(){
     const preview=$("imagePreview");
     if(!preview)return;
@@ -403,6 +408,7 @@ async function saveProduct(e){
         description:$("description").value.trim(),
         contentType:$("contentType").value === "both" ? "both" : ($("contentType").value === "image" ? "image" : "plans"),
         imageUrl:$("imageUrl").value.trim(),
+        downloadUrl:$("downloadUrl").value.trim(),
         plans:$("contentType").value === "image" ? [] : collectPlans(),
         buttons:collectButtons(),
         buyEnabled:$("buyEnabled").checked

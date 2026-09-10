@@ -614,65 +614,47 @@ app.get("/api/products", async (req, res) => {
     }
 });
 
-app.post("/api/products", requireAdmin, async (req, res) => {
-    try {
-        const body = req.body || {};
-        if (!String(body.name || "").trim()) return res.status(400).json({ message: "Product name is required." });
-
-        const product = {
-            id: crypto.randomUUID(),
-            icon: String(body.icon || "📦").trim(),
-            tag: String(body.tag || "NEW").trim(),
-            name: String(body.name).trim(),
-            description: String(body.description || "").trim(),
-            contentType: ["plans", "image", "both"].includes(body.contentType) ? body.contentType : "plans",
-            imageUrl: String(body.imageUrl || "").trim(),
-            plans: Array.isArray(body.plans) ? body.plans.slice(0, 20) : [],
-            buttons: Array.isArray(body.buttons) && body.buttons.length
-                ? body.buttons.slice(0, 2)
-                : [{ text: String(body.buttonText || "GET PRODUCT"), link: String(body.buttonLink || "#") }],
-            buyEnabled: Boolean(body.buyEnabled),
-            createdAt: new Date().toISOString()
-        };
-
-        await db.collection(COLLECTIONS.products).doc(product.id).set(product);
-        res.status(201).json(product);
-    } catch (error) {
-        console.error("PRODUCT ADD ERROR:", error);
-        res.status(500).json({ message: "Unable to save product." });
-    }
+function normalizeProductPlans(incomingPlans, oldPlans = []) {
+    const previous=Array.isArray(oldPlans)?oldPlans:[],used=new Set();
+    return (Array.isArray(incomingPlans)?incomingPlans:[]).slice(0,20).map(raw=>{
+        const label=String(raw?.label||"").trim(),price=String(raw?.price||"").trim(),iid=String(raw?.id||"").trim();let mi=-1;
+        if(iid)mi=previous.findIndex((p,i)=>!used.has(i)&&String(p?.id||"")===iid);
+        if(mi<0&&label)mi=previous.findIndex((p,i)=>!used.has(i)&&String(p?.label||"").trim()===label);
+        const old=mi>=0?previous[mi]:null;if(mi>=0)used.add(mi);
+        const licenses=Array.isArray(raw?.licenses)?raw.licenses.map(x=>String(x).trim()).filter(Boolean).slice(0,5000):(Array.isArray(old?.licenses)?old.licenses.map(x=>String(x).trim()).filter(Boolean).slice(0,5000):[]);
+        return {id:iid||String(old?.id||crypto.randomUUID()),label,price,licenses};
+    }).filter(p=>p.label||p.price);
+}
+app.post("/api/products", requireAdmin, async (req,res)=>{
+ try{const body=req.body||{};if(!String(body.name||"").trim())return res.status(400).json({message:"Product name is required."});
+ const product={id:crypto.randomUUID(),icon:String(body.icon||"📦").trim(),tag:String(body.tag||"NEW").trim(),name:String(body.name).trim(),description:String(body.description||"").trim(),
+ contentType:["plans","image","both"].includes(body.contentType)?body.contentType:"plans",imageUrl:String(body.imageUrl||"").trim(),downloadUrl:String(body.downloadUrl||"").trim(),plans:normalizeProductPlans(body.plans,[]),
+ buttons:Array.isArray(body.buttons)&&body.buttons.length?body.buttons.slice(0,2):[{text:String(body.buttonText||"GET PRODUCT"),link:String(body.buttonLink||"#")}],buyEnabled:Boolean(body.buyEnabled),createdAt:new Date().toISOString()};
+ await db.collection(COLLECTIONS.products).doc(product.id).set(product);res.status(201).json(product);
+ }catch(error){console.error("PRODUCT ADD ERROR:",error);res.status(500).json({message:"Unable to save product."})}
 });
-
-app.put("/api/products/:id", requireAdmin, async (req, res) => {
-    try {
-        const ref = db.collection(COLLECTIONS.products).doc(req.params.id);
-        const snapshot = await ref.get();
-        if (!snapshot.exists) return res.status(404).json({ message: "Product not found." });
-
-        const old = snapshot.data();
-        const body = req.body || {};
-        const updated = {
-            ...old,
-            icon: String(body.icon ?? old.icon ?? "📦").trim(),
-            tag: String(body.tag ?? old.tag ?? "NEW").trim(),
-            name: String(body.name ?? old.name ?? "").trim(),
-            description: String(body.description ?? old.description ?? "").trim(),
-            contentType: ["plans", "image", "both"].includes(body.contentType) ? body.contentType : (old.contentType || "plans"),
-            imageUrl: String(body.imageUrl ?? old.imageUrl ?? "").trim(),
-            plans: Array.isArray(body.plans) ? body.plans.slice(0, 20) : (old.plans || []),
-            buttons: Array.isArray(body.buttons) && body.buttons.length
-                ? body.buttons.slice(0, 2)
-                : (old.buttons || [{ text: "GET PRODUCT", link: "#" }]),
-            buyEnabled: typeof body.buyEnabled === "boolean" ? body.buyEnabled : Boolean(old.buyEnabled)
-        };
-
-        if (!updated.name) return res.status(400).json({ message: "Product name is required." });
-        await ref.set(updated);
-        res.json({ id: ref.id, ...updated });
-    } catch (error) {
-        console.error("PRODUCT UPDATE ERROR:", error);
-        res.status(500).json({ message: "Unable to update product." });
-    }
+app.put("/api/products/:id", requireAdmin, async (req,res)=>{
+ try{const ref=db.collection(COLLECTIONS.products).doc(req.params.id),snap=await ref.get();if(!snap.exists)return res.status(404).json({message:"Product not found."});
+ const old=snap.data(),body=req.body||{};const updated={...old,icon:String(body.icon??old.icon??"📦").trim(),tag:String(body.tag??old.tag??"NEW").trim(),name:String(body.name??old.name??"").trim(),description:String(body.description??old.description??"").trim(),
+ contentType:["plans","image","both"].includes(body.contentType)?body.contentType:(old.contentType||"plans"),imageUrl:String(body.imageUrl??old.imageUrl??"").trim(),downloadUrl:String(body.downloadUrl??old.downloadUrl??"").trim(),plans:Array.isArray(body.plans)?normalizeProductPlans(body.plans,old.plans||[]):(old.plans||[]),
+ buttons:Array.isArray(body.buttons)&&body.buttons.length?body.buttons.slice(0,2):(old.buttons||[{text:"GET PRODUCT",link:"#"}]),buyEnabled:typeof body.buyEnabled==="boolean"?body.buyEnabled:Boolean(old.buyEnabled)};
+ if(!updated.name)return res.status(400).json({message:"Product name is required."});await ref.set(updated);res.json({id:ref.id,...updated});
+ }catch(error){console.error("PRODUCT UPDATE ERROR:",error);res.status(500).json({message:"Unable to update product."})}
+});
+app.post("/api/products/:id/licenses", requireAdmin, async (req,res)=>{
+ try{const ref=db.collection(COLLECTIONS.products).doc(req.params.id),snap=await ref.get();if(!snap.exists)return res.status(404).json({message:"Product not found."});
+ const pi=Number(req.body?.planIndex),key=String(req.body?.key||"").trim();if(!Number.isInteger(pi)||pi<0)return res.status(400).json({message:"Invalid plan."});if(!key)return res.status(400).json({message:"License key is required."});
+ const data=snap.data(),plans=Array.isArray(data.plans)?data.plans.map(p=>({...p,licenses:Array.isArray(p?.licenses)?p.licenses.slice():[]})):[];if(!plans[pi])return res.status(400).json({message:"Selected plan is not available."});
+ if(plans.some(p=>p.licenses.some(x=>String(x).toLowerCase()===key.toLowerCase())))return res.status(409).json({message:"This license key already exists in this product."});
+ plans[pi].licenses.push(key);await ref.update({plans});res.json({ok:true,licenses:plans[pi].licenses});
+ }catch(error){console.error("LICENSE ADD ERROR:",error);res.status(500).json({message:"Unable to add license key."})}
+});
+app.delete("/api/products/:id/licenses", requireAdmin, async (req,res)=>{
+ try{const ref=db.collection(COLLECTIONS.products).doc(req.params.id),snap=await ref.get();if(!snap.exists)return res.status(404).json({message:"Product not found."});
+ const pi=Number(req.body?.planIndex),ki=Number(req.body?.keyIndex);if(!Number.isInteger(pi)||pi<0||!Number.isInteger(ki)||ki<0)return res.status(400).json({message:"Invalid license selection."});
+ const data=snap.data(),plans=Array.isArray(data.plans)?data.plans.map(p=>({...p,licenses:Array.isArray(p?.licenses)?p.licenses.slice():[]})):[];if(!plans[pi]||!plans[pi].licenses[ki])return res.status(404).json({message:"License key not found."});
+ plans[pi].licenses.splice(ki,1);await ref.update({plans});res.json({ok:true,licenses:plans[pi].licenses});
+ }catch(error){console.error("LICENSE REMOVE ERROR:",error);res.status(500).json({message:"Unable to remove license key."})}
 });
 
 app.delete("/api/products/:id", requireAdmin, async (req, res) => {
