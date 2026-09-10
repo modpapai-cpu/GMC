@@ -141,6 +141,7 @@ nav{height:78px;padding:0 7%;display:flex;align-items:center;justify-content:spa
         <select id="contentType" onchange="renderContentEditor()">
             <option value="plans">PLANS &amp; PRICES</option>
             <option value="image">IMAGE</option>
+            <option value="both">BOTH</option>
         </select>
     </div>
     <div id="plansEditorWrap">
@@ -258,7 +259,7 @@ function render(){
             <div class="item-top"><div class="item-icon">${esc(p.icon)}</div><div class="tag">${esc(p.tag)}</div></div>
             <h2>${esc(p.name)}</h2>
             <p>${esc(p.description)}</p>
-            ${p.contentType === "image" && p.imageUrl ? `<div class="plans image-admin-preview" style="display:flex;align-items:center;justify-content:center;min-height:110px;max-height:150px;overflow:hidden"><img src="/api/image-proxy?url=${encodeURIComponent(p.imageUrl)}" data-original="${esc(p.imageUrl)}" alt="${esc(p.name)}" style="display:block;max-width:100%;max-height:140px;width:auto;height:auto;object-fit:contain;border-radius:7px" onerror="if(this.dataset.tried!=="1"){this.dataset.tried="1";this.src=this.dataset.original}else{this.style.display="none";this.nextElementSibling.style.display="block"}"><span style="display:none;color:#555;font-size:9px">Image could not be loaded.</span></div>` : `<div class="plans">${(p.plans||[]).map(x=>`<div class="plan"><span>${esc(x.label)}</span><b>${esc(x.price)}</b></div>`).join("")}</div>`}
+            ${(p.contentType === "image" || p.contentType === "both") && p.imageUrl ? `<div class="plans image-admin-preview" style="display:flex;align-items:center;justify-content:center;min-height:110px;max-height:150px;overflow:hidden"><img src="/api/image-proxy?url=${encodeURIComponent(p.imageUrl)}" data-original="${esc(p.imageUrl)}" alt="${esc(p.name)}" style="display:block;max-width:100%;max-height:140px;width:auto;height:auto;object-fit:contain;border-radius:7px" onerror="if(this.dataset.tried!=="1"){this.dataset.tried="1";this.src=this.dataset.original}else{this.style.display="none";this.nextElementSibling.style.display="block"}"><span style="display:none;color:#555;font-size:9px">Image could not be loaded.</span></div>` : ""}${(p.contentType === "plans" || p.contentType === "both") ? `<div class="plans">${(p.plans||[]).map(x=>`<div class="plan"><span>${esc(x.label)}</span><b>${esc(x.price)}</b></div>`).join("")}</div>` : ""}
             <div style="color:#666;font-size:9px;margin-top:12px;">BUTTONS: ${getButtons(p).length}</div>
             <div class="actions">
                 <button onclick="openEdit('${esc(p.id)}')">EDIT</button>
@@ -340,7 +341,7 @@ function openEdit(id){
     $("tag").value=p.tag||"NEW";
     $("name").value=p.name||"";
     $("description").value=p.description||"";
-    $("contentType").value=p.contentType === "image" ? "image" : "plans";
+    $("contentType").value=p.contentType === "both" ? "both" : (p.contentType === "image" ? "image" : "plans");
     $("imageUrl").value=p.imageUrl||"";
     const editButtons=getButtons(p);
     $("buttonCount").value=String(editButtons.length>1?2:1);
@@ -375,9 +376,9 @@ function collectPlans(){
 
 function renderContentEditor(){
     const type=$("contentType").value;
-    $("plansEditorWrap").style.display=type==="plans"?"block":"none";
-    $("imageEditorWrap").classList.toggle("hidden",type!=="image");
-    if(type==="image") updateImagePreview();
+    $("plansEditorWrap").style.display=(type==="plans" || type==="both")?"block":"none";
+    $("imageEditorWrap").classList.toggle("hidden",type!=="image" && type!=="both");
+    if(type==="image" || type==="both") updateImagePreview();
 }
 
 function updateImagePreview(){
@@ -400,9 +401,9 @@ async function saveProduct(e){
         tag:$("tag").value.trim()||"NEW",
         name:$("name").value.trim(),
         description:$("description").value.trim(),
-        contentType:$("contentType").value === "image" ? "image" : "plans",
+        contentType:$("contentType").value === "both" ? "both" : ($("contentType").value === "image" ? "image" : "plans"),
         imageUrl:$("imageUrl").value.trim(),
-        plans:$("contentType").value === "plans" ? collectPlans() : [],
+        plans:$("contentType").value === "image" ? [] : collectPlans(),
         buttons:collectButtons(),
         buyEnabled:$("buyEnabled").checked
     };

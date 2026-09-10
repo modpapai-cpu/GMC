@@ -642,6 +642,14 @@
             font-weight: 900;
         }
 
+        /* ================= BOTH DISPLAY SLIDESHOW ================= */
+        .product-slideshow { position:relative; min-height:180px; }
+        .product-slideshow .slide-panel { width:100%; transition:opacity .45s ease, transform .45s ease; }
+        .product-slideshow .slide-image { display:block; }
+        .product-slideshow .slide-plans { display:none; }
+        .product-slideshow.show-plans .slide-image { display:none; }
+        .product-slideshow.show-plans .slide-plans { display:block; }
+
         /* ================= BUTTON ================= */
 
         .product-buttons {
@@ -845,7 +853,7 @@
  .buy-qr-wrap { width:280px; margin:0 auto 16px; display:flex; justify-content:center; }
 .qr-card { width:100%; background:#fff; border-radius:14px; padding:12px 12px 16px; box-sizing:border-box; text-align:center; overflow:hidden; }
 .qr-crop { width:280px; height:280px; margin:0 auto 10px; overflow:hidden; border-radius:10px; background:#fff; position:relative; }
-.qr-crop img { position:absolute; width:155%; height:155%; max-width:none; object-fit:cover; left:-32%; top:-32%; display:block; }
+.qr-crop img { position:absolute; width:155%; height:155%; max-width:none; object-fit:cover; left:-29%; top:-28%; display:block; }
 .qr-product, .qr-package, .qr-price { display:none !important; }
 .qr-upi-text, .qr-upi-apps { display:none; }
 .buy-qr-link { display:block; text-align:center; color:#ff3333; font-size:10px; margin-bottom:10px; }
@@ -1075,9 +1083,15 @@
                 `).join("");
 
                 const imageProxy = product.imageUrl ? `/api/image-proxy?url=${encodeURIComponent(product.imageUrl)}` : "";
-                const content = product.contentType === "image" && product.imageUrl
+                const imageMarkup = product.imageUrl
                     ? `<div class="pricing image-content"><img src="${escapeHtml(imageProxy)}" data-original="${escapeHtml(product.imageUrl)}" alt="${escapeHtml(product.name)}" onerror="if(this.dataset.tried!=="1"){this.dataset.tried="1";this.src=this.dataset.original;}else{this.style.display='none';this.nextElementSibling.style.display='flex'}"><div class="image-fallback">IMAGE UNAVAILABLE</div></div>`
-                    : `<div class="pricing">${plans}</div>`;
+                    : `<div class="pricing image-content"><div class="image-fallback">IMAGE UNAVAILABLE</div></div>`;
+                const plansMarkup = `<div class="pricing plans-content">${plans}</div>`;
+                const content = product.contentType === "both"
+                    ? `<div class="product-slideshow" data-slideshow="1"><div class="slide-panel slide-image">${imageMarkup}</div><div class="slide-panel slide-plans">${plansMarkup}</div></div>`
+                    : product.contentType === "image"
+                        ? imageMarkup
+                        : plansMarkup;
 
                 return `
                     <article class="product-card">
@@ -1106,6 +1120,10 @@
 
             document.querySelectorAll(".image-content img").forEach(img => {
                 img.addEventListener("click", () => openImageLightbox(img.src || img.dataset.original, img.alt));
+            });
+
+            document.querySelectorAll(".product-slideshow").forEach(slideshow => {
+                setInterval(() => slideshow.classList.toggle("show-plans"), 5000);
             });
 
         } catch (error) {

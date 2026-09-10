@@ -625,7 +625,7 @@ app.post("/api/products", requireAdmin, async (req, res) => {
             tag: String(body.tag || "NEW").trim(),
             name: String(body.name).trim(),
             description: String(body.description || "").trim(),
-            contentType: body.contentType === "image" ? "image" : "plans",
+            contentType: ["plans", "image", "both"].includes(body.contentType) ? body.contentType : "plans",
             imageUrl: String(body.imageUrl || "").trim(),
             plans: Array.isArray(body.plans) ? body.plans.slice(0, 20) : [],
             buttons: Array.isArray(body.buttons) && body.buttons.length
@@ -657,8 +657,7 @@ app.put("/api/products/:id", requireAdmin, async (req, res) => {
             tag: String(body.tag ?? old.tag ?? "NEW").trim(),
             name: String(body.name ?? old.name ?? "").trim(),
             description: String(body.description ?? old.description ?? "").trim(),
-            contentType: body.contentType === "image" ? "image"
-                : (body.contentType === "plans" ? "plans" : (old.contentType || "plans")),
+            contentType: ["plans", "image", "both"].includes(body.contentType) ? body.contentType : (old.contentType || "plans"),
             imageUrl: String(body.imageUrl ?? old.imageUrl ?? "").trim(),
             plans: Array.isArray(body.plans) ? body.plans.slice(0, 20) : (old.plans || []),
             buttons: Array.isArray(body.buttons) && body.buttons.length
