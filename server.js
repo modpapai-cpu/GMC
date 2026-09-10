@@ -198,6 +198,9 @@ const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID || "";
 const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || "";
 const RAZORPAY_QR_TTL_SECONDS = Math.max(300, Number(process.env.RAZORPAY_QR_TTL_SECONDS || 900));
 
+console.log("RAZORPAY KEY:", RAZORPAY_KEY_ID ? "SET" : "NOT SET");
+console.log("RAZORPAY SECRET:", RAZORPAY_KEY_SECRET ? "SET" : "NOT SET");
+
 function parsePlanAmount(value) {
     const raw = String(value ?? "").trim();
     const cleaned = raw.replace(/[^0-9.]/g, "");
