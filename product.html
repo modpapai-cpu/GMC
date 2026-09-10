@@ -842,14 +842,21 @@
 .buy-summary-row strong { color:#ddd; text-align:right; font-size:11px; max-width:70%; overflow-wrap:anywhere; }
 .buy-amount { text-align:center; color:#fff; font-size:24px; font-weight:950; margin:12px 0 4px; }
 .buy-status { text-align:center; color:#aaa; font-size:10px; min-height:18px; margin-bottom:12px; }
-.buy-qr-wrap { width:280px; height:280px; margin:0 auto 16px; border-radius:14px; background:#fff; display:flex; align-items:center; justify-content:center; overflow:hidden; }
-.buy-qr-wrap img { width:100%; height:100%; object-fit:contain; display:block; }
+.buy-qr-wrap { width:280px; margin:0 auto 16px; display:flex; justify-content:center; }
+.qr-card { width:100%; background:#fff; border-radius:14px; padding:18px 16px 20px; box-sizing:border-box; text-align:center; }
+.qr-card img { width:210px; height:210px; object-fit:contain; display:block; margin:0 auto 12px; }
+.qr-product { color:#111; font-size:18px; font-weight:900; margin-top:4px; }
+.qr-package { color:#666; font-size:13px; margin-top:5px; }
+.qr-price { color:#ef2028; font-size:24px; font-weight:950; margin-top:4px; }
+.qr-upi-text { color:#555; font-size:10px; font-weight:700; margin-top:12px; }
+.qr-upi-apps { display:flex; justify-content:center; gap:12px; margin-top:9px; color:#333; font-size:10px; font-weight:800; }
 .buy-qr-link { display:block; text-align:center; color:#ff3333; font-size:10px; margin-bottom:10px; }
 .buy-success { text-align:center; color:#33e68a; font-weight:900; font-size:14px; padding:8px 0 12px; }
 .product-buttons.three { grid-template-columns:repeat(3,minmax(0,1fr)); }
 @media(max-width:600px){
     .buy-modal{padding:8px}.buy-modal-box{border-radius:14px}.buy-modal-head{padding:20px 20px 5px}.buy-step{padding:10px 20px 22px}
-    .buy-qr-wrap{width:240px;height:240px}
+    .buy-qr-wrap{width:240px}
+    .qr-card img{width:205px;height:205px}
 }
 
     </style>
@@ -986,22 +993,19 @@
                 <div class="buy-amount" id="buyQrAmount">₹0</div>
                 <div class="buy-status" id="buyQrStatus">Creating Razorpay QR...</div>
                 <div class="buy-qr-wrap" id="buyQrWrap">
-    <div class="qr-card">
-        <img id="buyQrImage" alt="Razorpay payment QR">
-
-        <div class="qr-product" id="qrProductName">GMC</div>
-        <div class="qr-package" id="qrPackageName">Package</div>
-        <div class="qr-price" id="qrPackagePrice">₹0</div>
-
-        <div class="qr-upi-text">SCAN & PAY WITH ANY UPI APP</div>
-
-        <div class="qr-upi-apps">
-            <span>G Pay</span>
-            <span>PhonePe</span>
-            <span>Paytm</span>
-        </div>
-    </div>
-</div>
+                    <div class="qr-card">
+                        <img id="buyQrImage" alt="Razorpay payment QR">
+                        <div class="qr-product" id="qrProductName">GMC</div>
+                        <div class="qr-package" id="qrPackageName">Package</div>
+                        <div class="qr-price" id="qrPackagePrice">₹0</div>
+                        <div class="qr-upi-text">SCAN &amp; PAY WITH ANY UPI APP</div>
+                        <div class="qr-upi-apps">
+                            <span>G Pay</span>
+                            <span>PhonePe</span>
+                            <span>Paytm</span>
+                        </div>
+                    </div>
+                </div>
                 <a class="buy-qr-link" id="buyQrLink" href="#" target="_blank" rel="noopener noreferrer" hidden>OPEN QR</a>
                 <div class="buy-success" id="buySuccess" hidden>PAYMENT RECEIVED ✓</div>
                 <div class="buy-error" id="buyError3"></div>
@@ -1139,6 +1143,9 @@
     const buyQrPackage = document.getElementById("buyQrPackage");
     const buyQrEmail = document.getElementById("buyQrEmail");
     const buyQrAmount = document.getElementById("buyQrAmount");
+    const qrProductName = document.getElementById("qrProductName");
+    const qrPackageName = document.getElementById("qrPackageName");
+    const qrPackagePrice = document.getElementById("qrPackagePrice");
     const buyQrStatus = document.getElementById("buyQrStatus");
     const buyQrImage = document.getElementById("buyQrImage");
     const buyQrLink = document.getElementById("buyQrLink");
@@ -1177,6 +1184,9 @@
         buyQrPackage.textContent = "—";
         buyQrEmail.textContent = "—";
         buyQrAmount.textContent = "₹0";
+        qrProductName.textContent = "GMC";
+        qrPackageName.textContent = "Package";
+        qrPackagePrice.textContent = "₹0";
         buyQrStatus.textContent = "";
         buyQrImage.removeAttribute("src");
         buyQrLink.hidden = true;
@@ -1296,6 +1306,9 @@
             buyQrPackage.textContent = data.planLabel || selectedPlan.label || "—";
             buyQrEmail.textContent = data.customerEmail || buyCustomer.email || "—";
             buyQrAmount.textContent = `₹${Number(data.amount).toLocaleString("en-IN")}`;
+            qrProductName.textContent = data.productName || buyCurrentProduct.name || "GMC";
+            qrPackageName.textContent = data.planLabel || selectedPlan.label || "Package";
+            qrPackagePrice.textContent = `₹${Number(data.amount).toLocaleString("en-IN")}`;
             buyQrStatus.textContent = "Scan the QR with any supported UPI app.";
             buyQrImage.src = data.qrImageUrl;
             buyQrLink.href = data.qrImageUrl;
