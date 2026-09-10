@@ -842,24 +842,24 @@
 .buy-summary-row strong { color:#ddd; text-align:right; font-size:11px; max-width:70%; overflow-wrap:anywhere; }
 .buy-amount { text-align:center; color:#fff; font-size:24px; font-weight:950; margin:12px 0 4px; }
 .buy-status { text-align:center; color:#aaa; font-size:10px; min-height:18px; margin-bottom:12px; }
-.buy-qr-wrap { width:280px; height:280px; margin:0 auto 16px; display:flex; justify-content:center; overflow:hidden; background:#fff; border-radius:14px; position:relative; }
-.qr-card { width:100%; height:100%; background:#fff; border-radius:14px; box-sizing:border-box; text-align:center; overflow:hidden; position:relative; }
-/* Razorpay returns a portrait QR poster. Crop/zoom the real returned image so only the QR itself is visible. */
-.qr-card img { position:absolute; width:360px; height:auto; max-width:none; object-fit:contain; display:block; left:50%; top:-145px; transform:translateX(-50%); margin:0; }
-.qr-product { position:absolute; left:0; right:0; bottom:48px; color:#111; font-size:18px; font-weight:900; margin:0; background:#fff; }
-.qr-package { position:absolute; left:0; right:0; bottom:29px; color:#666; font-size:13px; margin:0; background:#fff; }
-.qr-price { position:absolute; left:0; right:0; bottom:3px; color:#ef2028; font-size:22px; font-weight:950; margin:0; background:#fff; }
+.buy-qr-wrap { width:280px; margin:0 auto 16px; display:flex; justify-content:center; }
+.qr-card { width:100%; background:#fff; border-radius:14px; padding:12px 12px 16px; box-sizing:border-box; text-align:center; overflow:hidden; }
+/* The server detects and crops the real Razorpay QR. Keep the QR large and crisp. */
+.qr-card img { width:100%; max-width:256px; aspect-ratio:1/1; height:auto; object-fit:contain; display:block; margin:0 auto 10px; image-rendering:auto; }
+.qr-product { color:#111; font-size:18px; font-weight:900; margin:2px 0 0; }
+.qr-package { color:#666; font-size:13px; margin:4px 0 0; }
+.qr-price { color:#ef2028; font-size:22px; font-weight:950; margin:4px 0 0; }
 .qr-upi-text, .qr-upi-apps { display:none; }
 .buy-qr-link { display:block; text-align:center; color:#ff3333; font-size:10px; margin-bottom:10px; }
 .buy-success { text-align:center; color:#33e68a; font-weight:900; font-size:14px; padding:8px 0 12px; }
 .product-buttons.three { grid-template-columns:repeat(3,minmax(0,1fr)); }
 @media(max-width:600px){
     .buy-modal{padding:8px}.buy-modal-box{border-radius:14px}.buy-modal-head{padding:20px 20px 5px}.buy-step{padding:10px 20px 22px}
-    .buy-qr-wrap{width:240px;height:240px}
-    .qr-card img{width:310px;top:-125px}
-    .qr-product{font-size:16px;bottom:42px}
-    .qr-package{font-size:12px;bottom:25px}
-    .qr-price{font-size:20px;bottom:2px}
+    .buy-qr-wrap{width:260px}
+    .qr-card img{max-width:236px}
+    .qr-product{font-size:16px}
+    .qr-package{font-size:12px}
+    .qr-price{font-size:20px}
 }
 
     </style>
@@ -1313,7 +1313,8 @@
             qrPackageName.textContent = data.planLabel || selectedPlan.label || "Package";
             qrPackagePrice.textContent = `₹${Number(data.amount).toLocaleString("en-IN")}`;
             buyQrStatus.textContent = "Scan the QR with any supported UPI app.";
-            buyQrImage.src = data.qrImageUrl;
+            // Use the server-side QR detector so only the actual QR is shown.
+            buyQrImage.src = `/api/payment/qr-image/${encodeURIComponent(data.purchaseId)}`;
             buyQrLink.href = data.qrImageUrl;
             buyQrLink.hidden = false;
             buySuccess.hidden = true;
