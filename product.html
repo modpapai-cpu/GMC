@@ -842,10 +842,10 @@
 .buy-summary-row strong { color:#ddd; text-align:right; font-size:11px; max-width:70%; overflow-wrap:anywhere; }
 .buy-amount { text-align:center; color:#fff; font-size:24px; font-weight:950; margin:12px 0 4px; }
 .buy-status { text-align:center; color:#aaa; font-size:10px; min-height:18px; margin-bottom:12px; }
-.buy-qr-wrap { width:280px; margin:0 auto 16px; display:flex; justify-content:center; }
+ .buy-qr-wrap { width:280px; margin:0 auto 16px; display:flex; justify-content:center; }
 .qr-card { width:100%; background:#fff; border-radius:14px; padding:12px 12px 16px; box-sizing:border-box; text-align:center; overflow:hidden; }
-/* The server detects and crops the real Razorpay QR. Keep the QR large and crisp. */
-.qr-card img { width:100%; max-width:256px; aspect-ratio:1/1; height:auto; object-fit:contain; display:block; margin:0 auto 10px; image-rendering:auto; }
+.qr-crop { width:236px; height:236px; margin:0 auto 10px; overflow:hidden; border-radius:8px; background:#fff; position:relative; }
+.qr-crop img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; object-position:center 63%; display:block; }
 .qr-product { color:#111; font-size:18px; font-weight:900; margin:2px 0 0; }
 .qr-package { color:#666; font-size:13px; margin:4px 0 0; }
 .qr-price { color:#ef2028; font-size:22px; font-weight:950; margin:4px 0 0; }
@@ -856,7 +856,7 @@
 @media(max-width:600px){
     .buy-modal{padding:8px}.buy-modal-box{border-radius:14px}.buy-modal-head{padding:20px 20px 5px}.buy-step{padding:10px 20px 22px}
     .buy-qr-wrap{width:260px}
-    .qr-card img{max-width:236px}
+    .qr-crop{width:220px;height:220px}
     .qr-product{font-size:16px}
     .qr-package{font-size:12px}
     .qr-price{font-size:20px}
@@ -997,7 +997,9 @@
                 <div class="buy-status" id="buyQrStatus">Creating Razorpay QR...</div>
                 <div class="buy-qr-wrap" id="buyQrWrap">
                     <div class="qr-card">
-                        <img id="buyQrImage" alt="Razorpay payment QR">
+                        <div class="qr-crop">
+                            <img id="buyQrImage" alt="Razorpay payment QR">
+                        </div>
                         <div class="qr-product" id="qrProductName">GMC</div>
                         <div class="qr-package" id="qrPackageName">Package</div>
                         <div class="qr-price" id="qrPackagePrice">₹0</div>
@@ -1314,7 +1316,7 @@
             qrPackagePrice.textContent = `₹${Number(data.amount).toLocaleString("en-IN")}`;
             buyQrStatus.textContent = "Scan the QR with any supported UPI app.";
             // Use the server-side QR detector so only the actual QR is shown.
-            buyQrImage.src = `/api/payment/qr-image/${encodeURIComponent(data.purchaseId)}`;
+            buyQrImage.src = data.qrImageUrl;
             buyQrLink.href = data.qrImageUrl;
             buyQrLink.hidden = false;
             buySuccess.hidden = true;
