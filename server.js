@@ -14,6 +14,9 @@ const SESSION_TTL = 15 * 60 * 1000;
 const MAX_OTP_ATTEMPTS = 5;
 const TEST_PAYMENT_ENABLED = String(process.env.TEST_PAYMENT_ENABLED || "false").toLowerCase() === "true";
 
+// Razorpay sends webhook signatures over the exact raw request body.
+// Keep this parser before the global JSON parser.
+app.use("/api/webhooks/razorpay", express.raw({ type: "application/json", limit: "500kb" }));
 app.use(express.json({ limit: "200kb" }));
 app.use(express.urlencoded({ extended: false }));
 app.use(express.static(__dirname));
@@ -200,6 +203,7 @@ const MAIL_FROM = process.env.MAIL_FROM || "modpapai@gmail.com";
 const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID || "";
 const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || "";
 const RAZORPAY_QR_TTL_SECONDS = Math.max(300, Number(process.env.RAZORPAY_QR_TTL_SECONDS || 900));
+const RAZORPAY_WEBHOOK_SECRET = process.env.RAZORPAY_WEBHOOK_SECRET || "";
 
 function parsePlanAmount(value) {
     const raw = String(value ?? "").trim();
@@ -857,6 +861,89 @@ app.delete("/api/products/:id", requireAdmin, async (req, res) => {
 });
 
 
+
+/* Razorpay webhook — production payment confirmation.
+ * Dashboard event: payment.captured
+ * The QR creation stores purchase_id in QR notes. Razorpay carries those notes
+ * into the payment entity for QR payments, so the webhook can identify the
+ * exact reserved purchase without guessing by amount/email.
+ */
+app.post("/api/webhooks/razorpay", async (req, res) => {
+    try {
+        if (!RAZORPAY_WEBHOOK_SECRET) {
+            console.error("RAZORPAY WEBHOOK: secret is not configured.");
+            return res.status(503).send("Webhook secret is not configured.");
+        }
+
+        const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.from("");
+        const signature = String(req.get("X-Razorpay-Signature") || "");
+        const expected = crypto
+            .createHmac("sha256", RAZORPAY_WEBHOOK_SECRET)
+            .update(rawBody)
+            .digest("hex");
+
+        const sigBuf = Buffer.from(signature, "utf8");
+        const expBuf = Buffer.from(expected, "utf8");
+        if (!signature || sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+            console.warn("RAZORPAY WEBHOOK: invalid signature.");
+            return res.status(401).send("Invalid signature.");
+        }
+
+        const eventId = String(req.get("x-razorpay-event-id") || "").trim();
+        const payload = JSON.parse(rawBody.toString("utf8") || "{}");
+        if (payload.event !== "payment.captured") return res.json({ ok: true, ignored: true });
+
+        const payment = payload?.payload?.payment?.entity || {};
+        const notes = payment.notes && typeof payment.notes === "object" ? payment.notes : {};
+        const purchaseId = String(notes.purchase_id || "").trim();
+        if (!purchaseId) {
+            console.warn("RAZORPAY WEBHOOK: payment.captured has no purchase_id note.", payment.id);
+            return res.status(202).json({ ok: true, ignored: true, reason: "purchase_id_missing" });
+        }
+
+        const ref = db.collection(COLLECTIONS.purchases).doc(purchaseId);
+        let shouldDeliver = false;
+
+        await db.runTransaction(async tx => {
+            const snap = await tx.get(ref);
+            if (!snap.exists) throw new Error("Purchase not found.");
+            const purchase = snap.data();
+            if (purchase.status === "paid") return;
+
+            const expectedAmount = Number(purchase.amountPaise || 0);
+            const paidAmount = Number(payment.amount || 0);
+            if (payment.status !== "captured" || !Number.isFinite(paidAmount) || paidAmount !== expectedAmount) {
+                throw new Error("Captured payment does not match the purchase amount.");
+            }
+
+            tx.update(ref, {
+                status: "paid",
+                paymentId: String(payment.id || ""),
+                webhookEventId: eventId || null,
+                licenseKey: purchase.credentialMode === "license" ? (String(purchase.reservedLicenseKey || "").trim() || null) : null,
+                account: purchase.credentialMode === "userpass" ? (purchase.reservedAccount || null) : null,
+                downloadUrl: String(purchase.downloadUrl || "").trim(),
+                paidAt: adminSdk.firestore.FieldValue.serverTimestamp(),
+                paymentConfirmedBy: "razorpay_webhook"
+            });
+            shouldDeliver = true;
+        });
+
+        if (shouldDeliver) {
+            try {
+                await deliverPurchaseEmail(purchaseId);
+            } catch (emailError) {
+                console.error("RAZORPAY WEBHOOK DELIVERY EMAIL FAILED:", emailError);
+            }
+        }
+
+        return res.json({ ok: true, received: true });
+    } catch (error) {
+        console.error("RAZORPAY WEBHOOK ERROR:", error);
+        return res.status(500).json({ message: "Webhook processing failed." });
+    }
+});
+
 /* Razorpay — customer-facing QR payment flow.
  * The amount is always read from the Firestore product on the server.
  */
@@ -1013,6 +1100,7 @@ app.post("/api/payment/qr", async (req, res) => {
             reservedLicenseKey,
             reservedAccount,
             credentialMode,
+            downloadUrl: String(product.downloadUrl || "").trim(),
             status: "creating",
             createdAt: adminSdk.firestore.FieldValue.serverTimestamp(),
             expiresAt
