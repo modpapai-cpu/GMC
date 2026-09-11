@@ -1085,7 +1085,7 @@
         if (product.buyEnabled) {
             const hasPurchasablePlan = (Array.isArray(product.plans) ? product.plans : []).some(plan => {
                 const mode = plan.credentialMode || "license";
-                if (mode === "off") return true;
+                if (mode === "off") return false;
                 if (mode === "userpass") return Array.isArray(plan.accounts) && plan.accounts.length > 0;
                 return Array.isArray(plan.licenses) && plan.licenses.length > 0;
             });
@@ -1275,7 +1275,7 @@
 
     function getPlanAvailability(plan) {
         const mode = plan?.credentialMode || "license";
-        if (mode === "off") return 1; // OFF does not require inventory.
+        if (mode === "off") return 0; // OFF means this plan is disabled/not purchasable.
         if (mode === "userpass") return Array.isArray(plan?.accounts) ? plan.accounts.length : 0;
         return Array.isArray(plan?.licenses) ? plan.licenses.length : 0;
     }
@@ -1295,7 +1295,7 @@
             const available = getPlanAvailability(plan);
             const disabled = available < 1;
             const selected = index === buySelectedPlanIndex && !disabled;
-            const availabilityText = mode === "off" ? "AVAILABLE" : disabled ? "OUT OF STOCK" : `${available} AVAILABLE`;
+            const availabilityText = disabled ? "OUT OF STOCK" : `${available} AVAILABLE`;
             return `<button type="button" class="buy-plan ${selected ? "selected" : ""}" data-plan-index="${index}" ${disabled ? "disabled" : ""}>`
                 + `<span class="buy-plan-label">${escapeHtml(plan.label || `Package ${index+1}`)}</span>`
                 + `<span class="buy-plan-price">${escapeHtml(plan.price || "")}<small style="display:block;color:${disabled?'#ff4444':'#777'};font-size:8px">${availabilityText}</small></span>`
