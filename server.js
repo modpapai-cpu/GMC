@@ -242,6 +242,141 @@ async function razorpayRequest(endpoint, options = {}) {
 }
 
 
+
+function escapeEmailHtml(value) {
+    return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+}
+
+function buildPurchaseEmail(purchase) {
+    const customerName = String(purchase.customerName || "Customer").trim() || "Customer";
+    const productName = String(purchase.productName || "GMC Product").trim();
+    const planLabel = String(purchase.planLabel || "Package").trim();
+    const amount = Number(purchase.amountPaise || 0) / 100;
+    const mode = ["license", "userpass", "off"].includes(purchase.credentialMode)
+        ? purchase.credentialMode
+        : "license";
+    const licenseKey = String(purchase.licenseKey || "").trim();
+    const account = purchase.account && typeof purchase.account === "object"
+        ? { username: String(purchase.account.username || "").trim(), password: String(purchase.account.password || "") }
+        : null;
+    const downloadUrl = String(purchase.downloadUrl || "").trim();
+
+    let credentialHtml = "";
+    let credentialText = "";
+    if (mode === "license" && licenseKey) {
+        credentialHtml = `
+            <div style="margin:24px 0;padding:20px;border:1px solid #333;border-radius:14px;background:#111;color:#fff;">
+                <div style="font-size:12px;font-weight:800;letter-spacing:1.5px;color:#ff2b2b;margin-bottom:10px;">YOUR LICENSE KEY</div>
+                <div style="font-size:20px;font-weight:800;letter-spacing:1px;word-break:break-all;color:#fff;">${escapeEmailHtml(licenseKey)}</div>
+                <div style="margin-top:8px;font-size:12px;color:#999;">Keep this key private and do not share it.</div>
+            </div>`;
+        credentialText = `\nLICENSE KEY: ${licenseKey}\nKeep this key private and do not share it.\n`;
+    } else if (mode === "userpass" && account?.username && account?.password) {
+        credentialHtml = `
+            <div style="margin:24px 0;padding:20px;border:1px solid #333;border-radius:14px;background:#111;color:#fff;">
+                <div style="font-size:12px;font-weight:800;letter-spacing:1.5px;color:#ff2b2b;margin-bottom:12px;">YOUR LOGIN DETAILS</div>
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="color:#fff;font-size:14px;">
+                    <tr><td style="padding:7px 0;color:#999;width:90px;">Username</td><td style="padding:7px 0;font-weight:800;word-break:break-all;">${escapeEmailHtml(account.username)}</td></tr>
+                    <tr><td style="padding:7px 0;color:#999;">Password</td><td style="padding:7px 0;font-weight:800;word-break:break-all;">${escapeEmailHtml(account.password)}</td></tr>
+                </table>
+                <div style="margin-top:8px;font-size:12px;color:#999;">Keep these login details private.</div>
+            </div>`;
+        credentialText = `\nUSERNAME: ${account.username}\nPASSWORD: ${account.password}\nKeep these login details private.\n`;
+    }
+
+    const downloadHtml = downloadUrl
+        ? `<a href="${escapeEmailHtml(downloadUrl)}" style="display:inline-block;background:#ff1111;color:#fff;text-decoration:none;font-weight:800;font-size:14px;padding:14px 24px;border-radius:10px;">DOWNLOAD GMC TOOL</a>`
+        : `<div style="padding:14px 16px;border-radius:10px;background:#171717;color:#aaa;font-size:13px;">Your download link will be provided separately.</div>`;
+    const downloadText = downloadUrl ? `DOWNLOAD: ${downloadUrl}` : "DOWNLOAD: Link will be provided separately.";
+
+    const htmlPart = `<!doctype html>
+<html><body style="margin:0;padding:0;background:#070707;font-family:Arial,Helvetica,sans-serif;color:#222;">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#070707;padding:28px 10px;">
+<tr><td align="center">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:620px;background:#fff;border-radius:18px;overflow:hidden;">
+<tr><td style="background:#0b0b0b;padding:28px 30px;text-align:center;border-bottom:3px solid #ff1111;">
+<div style="font-size:27px;font-weight:900;letter-spacing:1px;color:#fff;">GMC <span style="color:#ff1111;">STEAM TOOL</span></div>
+<div style="margin-top:8px;color:#aaa;font-size:12px;letter-spacing:1.5px;">ORDER CONFIRMATION</div>
+</td></tr>
+<tr><td style="padding:32px 30px;">
+<div style="font-size:22px;font-weight:800;color:#111;">Payment successful ✓</div>
+<p style="font-size:15px;line-height:1.7;color:#555;margin:10px 0 22px;">Hi <strong>${escapeEmailHtml(customerName)}</strong>, thank you for your purchase. Your GMC order has been confirmed and your access details are below.</p>
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;border-spacing:0;background:#f7f7f7;border-radius:12px;margin-bottom:20px;">
+<tr><td style="padding:12px 15px;color:#888;font-size:12px;">PRODUCT</td><td align="right" style="padding:12px 15px;color:#111;font-weight:800;font-size:13px;">${escapeEmailHtml(productName)}</td></tr>
+<tr><td style="padding:12px 15px;color:#888;font-size:12px;">PACKAGE</td><td align="right" style="padding:12px 15px;color:#111;font-weight:800;font-size:13px;">${escapeEmailHtml(planLabel)}</td></tr>
+<tr><td style="padding:12px 15px;color:#888;font-size:12px;">AMOUNT</td><td align="right" style="padding:12px 15px;color:#111;font-weight:800;font-size:13px;">₹${amount.toLocaleString("en-IN")}</td></tr>
+</table>
+${credentialHtml}
+<div style="margin-top:24px;text-align:center;">
+${downloadHtml}
+</div>
+<p style="font-size:12px;line-height:1.6;color:#999;margin:25px 0 0;text-align:center;">Please keep your license/login details private. If you have any issue with your order, reply to this email for support.</p>
+</td></tr>
+<tr><td style="background:#0b0b0b;padding:20px 30px;text-align:center;color:#777;font-size:11px;">© GMC Steam Tool · Automated purchase delivery</td></tr>
+</table></td></tr></table>
+</body></html>`;
+
+    const textPart = `GMC STEAM TOOL\n\nPayment successful ✓\n\nHi ${customerName}, thank you for your purchase.\n\nPRODUCT: ${productName}\nPACKAGE: ${planLabel}\nAMOUNT: ₹${amount.toLocaleString("en-IN")}\n${credentialText}\n${downloadText}\n\nPlease keep your access details private.`;
+    return { htmlPart, textPart };
+}
+
+async function deliverPurchaseEmail(purchaseId) {
+    const ref = db.collection(COLLECTIONS.purchases).doc(String(purchaseId));
+    const snap = await ref.get();
+    if (!snap.exists) return { sent: false, skipped: true };
+    const purchase = { id: snap.id, ...snap.data() };
+    if (purchase.status !== "paid") return { sent: false, skipped: true };
+    if (purchase.deliveryEmailSentAt) return { sent: true, alreadySent: true };
+    const customerEmail = cleanEmail(purchase.customerEmail);
+    if (!customerEmail) return { sent: false, skipped: true };
+
+    const now = Date.now();
+    let claimed = false;
+    await db.runTransaction(async tx => {
+        const fresh = await tx.get(ref);
+        if (!fresh.exists) return;
+        const data = fresh.data();
+        if (data.status !== "paid" || data.deliveryEmailSentAt) return;
+        const claimedAt = Number(data.deliveryEmailClaimedAt || 0);
+        if (data.deliveryEmailStatus === "sending" && claimedAt && now - claimedAt < 5 * 60 * 1000) return;
+        tx.update(ref, { deliveryEmailStatus: "sending", deliveryEmailClaimedAt: now, deliveryEmailError: null });
+        claimed = true;
+    });
+
+    if (!claimed) return { sent: false, claimedByOther: true };
+
+    try {
+        const fresh = await ref.get();
+        const data = { id: fresh.id, ...fresh.data() };
+        const { htmlPart, textPart } = buildPurchaseEmail(data);
+        await sendEmail({
+            to: customerEmail,
+            subject: `GMC Order Confirmed — ${data.productName || "Your Purchase"}`,
+            textPart,
+            htmlPart
+        });
+        await ref.update({
+            deliveryEmailStatus: "sent",
+            deliveryEmailSentAt: adminSdk.firestore.FieldValue.serverTimestamp(),
+            deliveryEmailClaimedAt: null,
+            deliveryEmailError: null
+        });
+        return { sent: true };
+    } catch (error) {
+        await ref.update({
+            deliveryEmailStatus: "failed",
+            deliveryEmailClaimedAt: null,
+            deliveryEmailError: String(error.message || "Unable to send delivery email.").slice(0, 1000)
+        }).catch(() => {});
+        throw error;
+    }
+}
+
 async function sendEmail({ to, subject, textPart, htmlPart, replyTo }) {
     if (!MAILJET_API_KEY || !MAILJET_SECRET_KEY) {
         throw new Error("Mailjet API credentials are not configured.");
@@ -915,7 +1050,17 @@ app.get("/api/payment/qr/:purchaseId", async (req, res) => {
 
         const purchase = snapshot.data();
         if (purchase.status === "paid") {
-            return res.json({ok:true,status:"paid",amount:Number(purchase.amountPaise||0)/100,productName:purchase.productName||"",planLabel:purchase.planLabel||"",paymentId:purchase.paymentId||null,licenseKey:purchase.licenseKey||null,downloadUrl:purchase.downloadUrl||null});
+            let emailStatus = purchase.deliveryEmailSentAt ? "sent" : (purchase.deliveryEmailStatus || "pending");
+            if (!purchase.deliveryEmailSentAt) {
+                try {
+                    const delivery = await deliverPurchaseEmail(purchaseId);
+                    emailStatus = delivery.sent || delivery.alreadySent ? "sent" : (delivery.claimedByOther ? "sending" : emailStatus);
+                } catch (emailError) {
+                    console.error("PURCHASE DELIVERY EMAIL FAILED:", emailError);
+                    emailStatus = "failed";
+                }
+            }
+            return res.json({ok:true,status:"paid",amount:Number(purchase.amountPaise||0)/100,productName:purchase.productName||"",planLabel:purchase.planLabel||"",paymentId:purchase.paymentId||null,downloadUrl:String(purchase.downloadUrl||"")||null,emailStatus});
         }
 
         if (Date.now() >= Number(purchase.expiresAt || 0)) {
@@ -938,11 +1083,44 @@ app.get("/api/payment/qr/:purchaseId", async (req, res) => {
         );
 
         if (captured) {
-            const licenseKey=String(purchase.reservedLicenseKey||"").trim();
-            const product=await getDocument(COLLECTIONS.products,purchase.productId);
-            const downloadUrl=String(product?.downloadUrl||"").trim();
-            await ref.update({status:"paid",paymentId:captured.id,licenseKey:licenseKey||null,account:account||null,credentialMode:mode,downloadUrl,paidAt:adminSdk.firestore.FieldValue.serverTimestamp()});
-            return res.json({ok:true,status:"paid",amount:Number(purchase.amountPaise||0)/100,productName:purchase.productName||"",planLabel:purchase.planLabel||"",paymentId:captured.id,licenseKey:licenseKey||null,account:account||null,credentialMode:mode,downloadUrl});
+            const licenseKey = String(purchase.reservedLicenseKey || "").trim();
+            const account = purchase.reservedAccount && typeof purchase.reservedAccount === "object"
+                ? { username: String(purchase.reservedAccount.username || "").trim(), password: String(purchase.reservedAccount.password || "") }
+                : null;
+            const mode = ["license", "userpass", "off"].includes(purchase.credentialMode)
+                ? purchase.credentialMode
+                : "license";
+            const product = await getDocument(COLLECTIONS.products, purchase.productId);
+            const downloadUrl = String(product?.downloadUrl || "").trim();
+            await ref.update({
+                status: "paid",
+                paymentId: captured.id,
+                licenseKey: mode === "license" ? (licenseKey || null) : null,
+                account: mode === "userpass" ? account : null,
+                credentialMode: mode,
+                downloadUrl,
+                paidAt: adminSdk.firestore.FieldValue.serverTimestamp()
+            });
+
+            let emailStatus = "pending";
+            try {
+                const delivery = await deliverPurchaseEmail(purchaseId);
+                emailStatus = delivery.sent || delivery.alreadySent ? "sent" : (delivery.claimedByOther ? "sending" : "pending");
+            } catch (emailError) {
+                console.error("PURCHASE DELIVERY EMAIL FAILED:", emailError);
+                emailStatus = "failed";
+            }
+
+            return res.json({
+                ok: true,
+                status: "paid",
+                amount: Number(purchase.amountPaise || 0) / 100,
+                productName: purchase.productName || "",
+                planLabel: purchase.planLabel || "",
+                paymentId: captured.id,
+                downloadUrl: downloadUrl || null,
+                emailStatus
+            });
         }
 
         return res.json({

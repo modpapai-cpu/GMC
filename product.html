@@ -1049,7 +1049,7 @@
                     </div>
                 </div>
                 <a class="buy-qr-link" id="buyQrLink" href="#" target="_blank" rel="noopener noreferrer" hidden>OPEN QR</a>
-                <div class="buy-success" id="buySuccess" hidden>PAYMENT RECEIVED ✓</div>
+                <div class="buy-success" id="buySuccess" hidden>PAYMENT RECEIVED ✓<br><span id="buyEmailDeliveryStatus" style="display:block;margin-top:8px;font-size:12px;font-weight:600;color:#aaa;">Your order details and download link are being sent to your email.</span></div>
                 <div class="buy-error" id="buyError3"></div>
                 <button class="buy-secondary" id="buyCloseAfter" type="button">CLOSE</button>
             </section>
@@ -1442,6 +1442,12 @@
             if (data.status === "paid") {
                 stopBuyPolling();
                 buyQrStatus.textContent = "Payment verified successfully.";
+                const deliveryStatus = document.getElementById("buyEmailDeliveryStatus");
+                if (deliveryStatus) {
+                    deliveryStatus.textContent = data.emailStatus === "sent"
+                        ? `Order details, your access credentials and download link have been sent to ${buyCustomer.email}.`
+                        : `Payment received. Your order email is being processed for ${buyCustomer.email}.`;
+                }
                 buySuccess.hidden = false;
                 buyQrWrap.style.display = "none";
                 buyQrLink.hidden = true;
