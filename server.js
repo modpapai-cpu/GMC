@@ -622,39 +622,79 @@ function normalizeProductPlans(incomingPlans, oldPlans = []) {
         if(mi<0&&label)mi=previous.findIndex((p,i)=>!used.has(i)&&String(p?.label||"").trim()===label);
         const old=mi>=0?previous[mi]:null;if(mi>=0)used.add(mi);
         const licenses=Array.isArray(raw?.licenses)?raw.licenses.map(x=>String(x).trim()).filter(Boolean).slice(0,5000):(Array.isArray(old?.licenses)?old.licenses.map(x=>String(x).trim()).filter(Boolean).slice(0,5000):[]);
-        return {id:iid||String(old?.id||crypto.randomUUID()),label,price,licenses};
+        const accounts=Array.isArray(raw?.accounts)?raw.accounts.map(x=>({username:String(x?.username||"").trim(),password:String(x?.password||"")})).filter(x=>x.username&&x.password).slice(0,5000):(Array.isArray(old?.accounts)?old.accounts.map(x=>({username:String(x?.username||"").trim(),password:String(x?.password||"")})).filter(x=>x.username&&x.password).slice(0,5000):[]);
+        const credentialMode=["license","userpass","off"].includes(raw?.credentialMode)?raw.credentialMode:(old?.credentialMode||"license");
+        return {id:iid||String(old?.id||crypto.randomUUID()),label,price,licenses,accounts,credentialMode};
     }).filter(p=>p.label||p.price);
 }
-app.post("/api/products", requireAdmin, async (req,res)=>{
- try{const body=req.body||{};if(!String(body.name||"").trim())return res.status(400).json({message:"Product name is required."});
- const product={id:crypto.randomUUID(),icon:String(body.icon||"📦").trim(),tag:String(body.tag||"NEW").trim(),name:String(body.name).trim(),description:String(body.description||"").trim(),
- contentType:["plans","image","both"].includes(body.contentType)?body.contentType:"plans",imageUrl:String(body.imageUrl||"").trim(),downloadUrl:String(body.downloadUrl||"").trim(),plans:normalizeProductPlans(body.plans,[]),
- buttons:Array.isArray(body.buttons)&&body.buttons.length?body.buttons.slice(0,2):[{text:String(body.buttonText||"GET PRODUCT"),link:String(body.buttonLink||"#")}],buyEnabled:Boolean(body.buyEnabled),createdAt:new Date().toISOString()};
- await db.collection(COLLECTIONS.products).doc(product.id).set(product);res.status(201).json(product);
- }catch(error){console.error("PRODUCT ADD ERROR:",error);res.status(500).json({message:"Unable to save product."})}
+
+app.post("/api/products", requireAdmin, async (req, res) => {
+    try {
+        const body = req.body || {};
+        if (!String(body.name || "").trim()) return res.status(400).json({ message: "Product name is required." });
+
+        const product = {
+            id: crypto.randomUUID(),
+            icon: String(body.icon || "📦").trim(),
+            tag: String(body.tag || "NEW").trim(),
+            name: String(body.name).trim(),
+            description: String(body.description || "").trim(),
+            contentType: ["plans", "image", "both"].includes(body.contentType) ? body.contentType : "plans",
+            imageUrl: String(body.imageUrl || "").trim(),
+            downloadUrl: String(body.downloadUrl || "").trim(),
+            plans: normalizeProductPlans(body.plans, []),
+            buttons: Array.isArray(body.buttons) && body.buttons.length
+                ? body.buttons.slice(0, 2)
+                : [{ text: String(body.buttonText || "GET PRODUCT"), link: String(body.buttonLink || "#") }],
+            buyEnabled: Boolean(body.buyEnabled),
+            createdAt: new Date().toISOString()
+        };
+
+        await db.collection(COLLECTIONS.products).doc(product.id).set(product);
+        res.status(201).json(product);
+    } catch (error) {
+        console.error("PRODUCT ADD ERROR:", error);
+        res.status(500).json({ message: "Unable to save product." });
+    }
 });
-app.put("/api/products/:id", requireAdmin, async (req,res)=>{
- try{const ref=db.collection(COLLECTIONS.products).doc(req.params.id),snap=await ref.get();if(!snap.exists)return res.status(404).json({message:"Product not found."});
- const old=snap.data(),body=req.body||{};const updated={...old,icon:String(body.icon??old.icon??"📦").trim(),tag:String(body.tag??old.tag??"NEW").trim(),name:String(body.name??old.name??"").trim(),description:String(body.description??old.description??"").trim(),
- contentType:["plans","image","both"].includes(body.contentType)?body.contentType:(old.contentType||"plans"),imageUrl:String(body.imageUrl??old.imageUrl??"").trim(),downloadUrl:String(body.downloadUrl??old.downloadUrl??"").trim(),plans:Array.isArray(body.plans)?normalizeProductPlans(body.plans,old.plans||[]):(old.plans||[]),
- buttons:Array.isArray(body.buttons)&&body.buttons.length?body.buttons.slice(0,2):(old.buttons||[{text:"GET PRODUCT",link:"#"}]),buyEnabled:typeof body.buyEnabled==="boolean"?body.buyEnabled:Boolean(old.buyEnabled)};
- if(!updated.name)return res.status(400).json({message:"Product name is required."});await ref.set(updated);res.json({id:ref.id,...updated});
- }catch(error){console.error("PRODUCT UPDATE ERROR:",error);res.status(500).json({message:"Unable to update product."})}
+
+app.put("/api/products/:id", requireAdmin, async (req, res) => {
+    try {
+        const ref = db.collection(COLLECTIONS.products).doc(req.params.id);
+        const snapshot = await ref.get();
+        if (!snapshot.exists) return res.status(404).json({ message: "Product not found." });
+
+        const old = snapshot.data();
+        const body = req.body || {};
+        const updated = {
+            ...old,
+            icon: String(body.icon ?? old.icon ?? "📦").trim(),
+            tag: String(body.tag ?? old.tag ?? "NEW").trim(),
+            name: String(body.name ?? old.name ?? "").trim(),
+            description: String(body.description ?? old.description ?? "").trim(),
+            contentType: ["plans", "image", "both"].includes(body.contentType) ? body.contentType : (old.contentType || "plans"),
+            imageUrl: String(body.imageUrl ?? old.imageUrl ?? "").trim(),
+            downloadUrl: String(body.downloadUrl ?? old.downloadUrl ?? "").trim(),
+            plans: Array.isArray(body.plans) ? normalizeProductPlans(body.plans, old.plans || []) : (old.plans || []),
+            buttons: Array.isArray(body.buttons) && body.buttons.length
+                ? body.buttons.slice(0, 2)
+                : (old.buttons || [{ text: "GET PRODUCT", link: "#" }]),
+            buyEnabled: typeof body.buyEnabled === "boolean" ? body.buyEnabled : Boolean(old.buyEnabled)
+        };
+
+        if (!updated.name) return res.status(400).json({ message: "Product name is required." });
+        await ref.set(updated);
+        res.json({ id: ref.id, ...updated });
+    } catch (error) {
+        console.error("PRODUCT UPDATE ERROR:", error);
+        res.status(500).json({ message: "Unable to update product." });
+    }
 });
-app.post("/api/products/:id/licenses", requireAdmin, async (req,res)=>{
- try{const ref=db.collection(COLLECTIONS.products).doc(req.params.id),snap=await ref.get();if(!snap.exists)return res.status(404).json({message:"Product not found."});
- const pi=Number(req.body?.planIndex),key=String(req.body?.key||"").trim();if(!Number.isInteger(pi)||pi<0)return res.status(400).json({message:"Invalid plan."});if(!key)return res.status(400).json({message:"License key is required."});
- const data=snap.data(),plans=Array.isArray(data.plans)?data.plans.map(p=>({...p,licenses:Array.isArray(p?.licenses)?p.licenses.slice():[]})):[];if(!plans[pi])return res.status(400).json({message:"Selected plan is not available."});
- if(plans.some(p=>p.licenses.some(x=>String(x).toLowerCase()===key.toLowerCase())))return res.status(409).json({message:"This license key already exists in this product."});
- plans[pi].licenses.push(key);await ref.update({plans});res.json({ok:true,licenses:plans[pi].licenses});
- }catch(error){console.error("LICENSE ADD ERROR:",error);res.status(500).json({message:"Unable to add license key."})}
-});
-app.delete("/api/products/:id/licenses", requireAdmin, async (req,res)=>{
- try{const ref=db.collection(COLLECTIONS.products).doc(req.params.id),snap=await ref.get();if(!snap.exists)return res.status(404).json({message:"Product not found."});
- const pi=Number(req.body?.planIndex),ki=Number(req.body?.keyIndex);if(!Number.isInteger(pi)||pi<0||!Number.isInteger(ki)||ki<0)return res.status(400).json({message:"Invalid license selection."});
- const data=snap.data(),plans=Array.isArray(data.plans)?data.plans.map(p=>({...p,licenses:Array.isArray(p?.licenses)?p.licenses.slice():[]})):[];if(!plans[pi]||!plans[pi].licenses[ki])return res.status(404).json({message:"License key not found."});
- plans[pi].licenses.splice(ki,1);await ref.update({plans});res.json({ok:true,licenses:plans[pi].licenses});
- }catch(error){console.error("LICENSE REMOVE ERROR:",error);res.status(500).json({message:"Unable to remove license key."})}
+
+app.post("/api/products/:id/licenses/bulk", requireAdmin, async (req,res)=>{
+ try{const ref=db.collection(COLLECTIONS.products).doc(req.params.id),keys=Array.isArray(req.body?.keys)?req.body.keys.map(x=>String(x).trim()).filter(Boolean):[],pi=Number(req.body?.planIndex);if(!Number.isInteger(pi)||pi<0)return res.status(400).json({message:"Invalid plan."});if(!keys.length)return res.status(400).json({message:"No license keys found."});
+  const result=await db.runTransaction(async tx=>{const snap=await tx.get(ref);if(!snap.exists)throw new Error("Product not found.");const data=snap.data(),plans=Array.isArray(data.plans)?data.plans.map(p=>({...p,licenses:Array.isArray(p?.licenses)?p.licenses.slice():[]})):[];if(!plans[pi])throw new Error("Selected plan is not available.");const seen=new Set(plans.flatMap(p=>p.licenses.map(x=>String(x).toLowerCase())));let added=0,duplicates=0;for(const key of keys){const k=key.toLowerCase();if(seen.has(k)){duplicates++;continue;}seen.add(k);plans[pi].licenses.push(key);added++;}tx.update(ref,{plans});return {added,duplicates,available:plans[pi].licenses.length};});res.json({ok:true,...result});
+ }catch(error){console.error("LICENSE BULK ADD ERROR:",error);res.status(500).json({message:error.message||"Unable to import license keys."})}
 });
 
 app.delete("/api/products/:id", requireAdmin, async (req, res) => {
@@ -710,6 +750,8 @@ app.post("/api/payment/qr", async (req, res) => {
 
         const purchaseRef = db.collection(COLLECTIONS.purchases).doc();
         const purchaseId = purchaseRef.id;
+        let reservedLicenseKey = ""; let reservedAccount = null; let credentialMode = "license";
+        await db.runTransaction(async tx=>{const pref=db.collection(COLLECTIONS.products).doc(productId);const snap=await tx.get(pref);if(!snap.exists)throw new Error("Product not found.");const data=snap.data(),pp=Array.isArray(data.plans)?data.plans.map(p=>({...p,licenses:Array.isArray(p?.licenses)?p.licenses.slice():[],accounts:Array.isArray(p?.accounts)?p.accounts.map(x=>({...x})):[]})):[];const plan=pp[planIndex];if(!plan)throw new Error("Selected package is not available.");credentialMode=["license","userpass","off"].includes(plan.credentialMode)?plan.credentialMode:"license";if(credentialMode==="license"){if(!plan.licenses.length)throw new Error("This plan is currently out of stock.");reservedLicenseKey=String(plan.licenses.shift()).trim();}else if(credentialMode==="userpass"){if(!plan.accounts.length)throw new Error("This plan is currently out of stock.");reservedAccount=plan.accounts.shift();}tx.update(pref,{plans:pp});});
         const now = Date.now();
         const expiresAt = now + RAZORPAY_QR_TTL_SECONDS * 1000;
         const closeBy = Math.floor(expiresAt / 1000);
@@ -722,6 +764,9 @@ app.post("/api/payment/qr", async (req, res) => {
             amountPaise,
             customerName,
             customerEmail,
+            reservedLicenseKey,
+            reservedAccount,
+            credentialMode,
             status: "creating",
             createdAt: adminSdk.firestore.FieldValue.serverTimestamp(),
             expiresAt
@@ -772,10 +817,8 @@ app.post("/api/payment/qr", async (req, res) => {
                 expiresAt
             });
         } catch (error) {
-            await purchaseRef.update({
-                status: "failed",
-                error: String(error.message || "Unable to create Razorpay QR.")
-            }).catch(() => {});
+            await purchaseRef.update({status:"failed",error:String(error.message||"Unable to create Razorpay QR.")}).catch(()=>{});
+            if(reservedLicenseKey || reservedAccount){await db.runTransaction(async tx=>{const prodRef=db.collection(COLLECTIONS.products).doc(productId),ps=await tx.get(prodRef);if(!ps.exists)return;const data=ps.data(),pp=Array.isArray(data.plans)?data.plans.map(p=>({...p,licenses:Array.isArray(p?.licenses)?p.licenses.slice():[]})):[];const target=pp[planIndex];if(target){if(reservedLicenseKey&&!target.licenses.some(x=>String(x).toLowerCase()===reservedLicenseKey.toLowerCase()))target.licenses.push(reservedLicenseKey);if(reservedAccount&&!target.accounts.some(x=>String(x.username).toLowerCase()===String(reservedAccount.username).toLowerCase()))target.accounts.push(reservedAccount);}tx.update(prodRef,{plans:pp});}).catch(()=>{});}
             console.error("RAZORPAY QR CREATE FAILED:", error);
             return res.status(502).json({
                 message: `Unable to create Razorpay QR: ${error.message || "Unknown Razorpay error."}`
@@ -872,18 +915,11 @@ app.get("/api/payment/qr/:purchaseId", async (req, res) => {
 
         const purchase = snapshot.data();
         if (purchase.status === "paid") {
-            return res.json({
-                ok: true, status: "paid",
-                amount: Number(purchase.amountPaise || 0) / 100,
-                productName: purchase.productName || "",
-                planLabel: purchase.planLabel || "",
-                paymentId: purchase.paymentId || null
-            });
+            return res.json({ok:true,status:"paid",amount:Number(purchase.amountPaise||0)/100,productName:purchase.productName||"",planLabel:purchase.planLabel||"",paymentId:purchase.paymentId||null,licenseKey:purchase.licenseKey||null,downloadUrl:purchase.downloadUrl||null});
         }
 
         if (Date.now() >= Number(purchase.expiresAt || 0)) {
-            if (purchase.status !== "expired") await ref.update({ status: "expired" }).catch(() => {});
-            return res.json({ ok: true, status: "expired" });
+            if(purchase.status!=="expired"){const reserved=String(purchase.reservedLicenseKey||"").trim(),account=purchase.reservedAccount||null;if(reserved||account){await db.runTransaction(async tx=>{const fresh=await tx.get(ref);if(!fresh.exists||fresh.data().status==="paid")return;const prodRef=db.collection(COLLECTIONS.products).doc(purchase.productId),ps=await tx.get(prodRef);if(!ps.exists)return;const data=ps.data(),pp=Array.isArray(data.plans)?data.plans.map(p=>({...p,licenses:Array.isArray(p?.licenses)?p.licenses.slice():[],accounts:Array.isArray(p?.accounts)?p.accounts.map(x=>({...x})):[]})):[];const target=pp[Number(purchase.planIndex)];if(target){if(reserved&&!target.licenses.some(x=>String(x).toLowerCase()===reserved.toLowerCase()))target.licenses.push(reserved);if(account&&!target.accounts.some(x=>String(x.username).toLowerCase()===String(account.username).toLowerCase()))target.accounts.push(account);}tx.update(prodRef,{plans:pp});tx.update(ref,{status:"expired",reservedLicenseKey:null,reservedAccount:null});}).catch(()=>{});}else await ref.update({status:"expired"}).catch(()=>{});}return res.json({ok:true,status:"expired"});
         }
 
         if (!purchase.razorpayQrId) {
@@ -902,20 +938,11 @@ app.get("/api/payment/qr/:purchaseId", async (req, res) => {
         );
 
         if (captured) {
-            await ref.update({
-                status: "paid",
-                paymentId: captured.id,
-                paidAt: adminSdk.firestore.FieldValue.serverTimestamp()
-            });
-
-            return res.json({
-                ok: true,
-                status: "paid",
-                amount: Number(purchase.amountPaise || 0) / 100,
-                productName: purchase.productName || "",
-                planLabel: purchase.planLabel || "",
-                paymentId: captured.id
-            });
+            const licenseKey=String(purchase.reservedLicenseKey||"").trim();
+            const product=await getDocument(COLLECTIONS.products,purchase.productId);
+            const downloadUrl=String(product?.downloadUrl||"").trim();
+            await ref.update({status:"paid",paymentId:captured.id,licenseKey:licenseKey||null,account:account||null,credentialMode:mode,downloadUrl,paidAt:adminSdk.firestore.FieldValue.serverTimestamp()});
+            return res.json({ok:true,status:"paid",amount:Number(purchase.amountPaise||0)/100,productName:purchase.productName||"",planLabel:purchase.planLabel||"",paymentId:captured.id,licenseKey:licenseKey||null,account:account||null,credentialMode:mode,downloadUrl});
         }
 
         return res.json({

@@ -48,8 +48,7 @@ nav{height:78px;padding:0 7%;display:flex;align-items:center;justify-content:spa
 }
 
 
-.license-management{margin-top:18px;padding:16px;border:1px solid #202020;border-radius:12px;background:rgba(255,255,255,.015)}
-.license-management-title{font-size:11px;font-weight:900;color:#fff;letter-spacing:.7px;margin-bottom:12px}.license-plan{border:1px solid #222;border-radius:10px;padding:12px;margin-bottom:10px}.license-plan-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px}.license-plan-name{font-size:11px;font-weight:800;color:#ddd}.license-plan-count{font-size:9px;color:#777}.license-list{display:flex;flex-direction:column;gap:6px;margin-bottom:9px}.license-row{display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:7px;background:#0b0b0b;border:1px solid #181818}.license-row code{flex:1;min-width:0;color:#ccc;font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.license-remove{width:27px;height:27px;padding:0;border:1px solid rgba(255,40,40,.25);border-radius:6px;background:rgba(255,0,0,.07);color:#ff4141;cursor:pointer;font-size:15px}.license-empty{font-size:9px;color:#555;padding:3px 0 8px}.add-license-btn{width:100%;padding:8px 10px;border-radius:7px;border:1px dashed #333;background:#0c0c0c;color:#aaa;font-size:9px;font-weight:800;cursor:pointer}.add-license-btn:hover{border-color:#666;color:#fff}.license-note{margin-top:10px;font-size:9px;line-height:1.6;color:#555}
+.license-management select{background:#111;color:#fff;border:1px solid #333;border-radius:6px;padding:5px;font-size:9px}.license-management{border:1px solid #202020;border-radius:9px;padding:12px;margin-top:14px}.license-management-title{font-size:10px;font-weight:900;color:#fff;letter-spacing:1px;margin-bottom:10px}.license-plan{border:1px solid #222;border-radius:9px;padding:10px;margin-bottom:9px}.license-plan-head{display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:8px}.license-plan-name{font-size:10px;font-weight:900;color:#ddd}.license-plan-count{font-size:8px;color:#777}.license-list{display:grid;gap:5px;margin-bottom:8px}.license-row{display:flex;align-items:center;gap:7px;padding:6px 7px;background:#080808;border:1px solid #181818;border-radius:6px}.license-row code{flex:1;color:#bbb;font-size:9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.license-remove{width:25px;height:25px;border:1px solid #422;background:#150505;color:#f55;border-radius:5px;cursor:pointer}.license-empty{font-size:9px;color:#555;padding:3px 0 8px}.license-tools{display:flex;gap:7px}.add-license-btn{flex:1;padding:8px;border-radius:6px;border:1px dashed #333;background:#0c0c0c;color:#aaa;font-size:9px;font-weight:800;cursor:pointer}.add-license-btn:hover{border-color:#777;color:#fff}.license-import-input{display:none}.license-note{font-size:8px;color:#555;line-height:1.5;margin-top:8px}
 </style>
 </head>
 <body>
@@ -159,16 +158,17 @@ nav{height:78px;padding:0 7%;display:flex;align-items:center;justify-content:spa
         <div class="image-preview" id="imagePreview"><span>Image preview will appear here</span></div>
     </div>
 </div>
-    <div class="field" style="margin-top:18px">
-        <label>FILE LINK</label>
-        <input id="downloadUrl" type="url" placeholder="Direct download link for the product file">
-        <div class="license-note">This is one common file link. All plans can use the same file.</div>
-    </div>
-    <div class="license-management" id="licenseManagementWrap">
-        <div class="license-management-title">LICENSE MANAGEMENT</div>
-        <div id="licenseManagement"></div>
-        <div class="license-note">License keys are stored separately for each plan. Duplicate keys are blocked.</div>
-    </div>
+<div class="field" style="margin-top:18px">
+    <label>FILE LINK</label>
+    <input id="downloadUrl" type="url" placeholder="Direct download link for the product file">
+    <div class="button-editor-note">One common file link for every plan.</div>
+</div>
+<div class="license-management" id="licenseManagementWrap">
+    <div class="license-management-title">LICENSE MANAGEMENT</div>
+    <input id="licenseFileInput" class="license-import-input" type="file" accept=".txt,text/plain">
+    <div id="licenseManagement"></div>
+    <div class="license-note">Add keys manually or import a TXT file in bulk. One license belongs to one plan.</div>
+</div>
 </div>
 </div>
 <div id="formMsg" class="form-msg"></div>
@@ -347,45 +347,55 @@ function openAdd(){
 }
 
 function openEdit(id){
-    const p=products.find(x=>x.id===id);if(!p)return;
-    $("productId").value=p.id;$("icon").value=p.icon||"📦";$("tag").value=p.tag||"NEW";$("name").value=p.name||"";
-    $("description").value=p.description||"";$("contentType").value=p.contentType==="both"?"both":(p.contentType==="image"?"image":"plans");
-    $("imageUrl").value=p.imageUrl||"";$("downloadUrl").value=p.downloadUrl||"";const editButtons=getButtons(p);$("buttonCount").value=String(editButtons.length>1?2:1);
-    $("buyEnabled").checked=Boolean(p.buyEnabled);renderButtonEditor(editButtons);$("plans").innerHTML="";
-    (p.plans||[]).forEach(x=>addPlan(x.label,x.price,x.id,x.licenses||[]));if(!(p.plans||[]).length)addPlan();
-    renderContentEditor();updateImagePreview();renderLicenseManagement();$("formMsg").textContent="";
-    $("modalTitle").textContent="EDIT PRODUCT";$("modal").classList.remove("hidden");
+    const p=products.find(x=>x.id===id);
+    if(!p)return;
+    $("productId").value=p.id;
+    $("icon").value=p.icon||"📦";
+    $("tag").value=p.tag||"NEW";
+    $("name").value=p.name||"";
+    $("description").value=p.description||"";
+    $("contentType").value=p.contentType === "both" ? "both" : (p.contentType === "image" ? "image" : "plans");
+    $("imageUrl").value=p.imageUrl||"";
+    $("downloadUrl").value=p.downloadUrl||"";
+    const editButtons=getButtons(p);
+    $("buttonCount").value=String(editButtons.length>1?2:1);
+    $("buyEnabled").checked=Boolean(p.buyEnabled);
+    renderButtonEditor(editButtons);
+    $("plans").innerHTML="";
+    (p.plans||[]).forEach(x=>addPlan(x.label,x.price,x.id,x.licenses||[],x.credentialMode||"license",x.accounts||[]));
+    if(!(p.plans||[]).length)addPlan();
+    renderContentEditor();
+    updateImagePreview();
+    $("formMsg").textContent="";
+    $("modalTitle").textContent="EDIT PRODUCT";
+    $("modal").classList.remove("hidden");
 }
+
 function closeModal(){$("modal").classList.add("hidden")}
+
 function newPlanId(){return "plan_"+Date.now().toString(36)+"_"+Math.random().toString(36).slice(2,9)}
-function addPlan(label="",price="",id="",licenses=[]){
-    const div=document.createElement("div");div.className="plan-edit";div.dataset.planId=id||newPlanId();div.dataset.licenses=JSON.stringify(Array.isArray(licenses)?licenses:[]);
+function addPlan(label="",price="",id="",licenses=[],credentialMode="license",accounts=[]){
+    const div=document.createElement("div");div.className="plan-edit";div.dataset.planId=id||newPlanId();div.dataset.licenses=JSON.stringify(Array.isArray(licenses)?licenses:[]);div.dataset.credentialMode=credentialMode||"license";div.dataset.accounts=JSON.stringify(Array.isArray(accounts)?accounts:[]);
     div.innerHTML=`<input class="plan-label" placeholder="1 Week" value="${esc(label)}"><input class="plan-price" placeholder="₹299" value="${esc(price)}"><button type="button" class="remove-plan">×</button>`;
     div.querySelector(".remove-plan").onclick=()=>{const a=JSON.parse(div.dataset.licenses||"[]");if(a.length&&!confirm("This plan has license keys. Remove the plan and its license list?"))return;div.remove();renderLicenseManagement()};
     $("plans").appendChild(div);div.querySelector(".plan-label").addEventListener("input",renderLicenseManagement);renderLicenseManagement();
 }
-function collectPlans(){return [...document.querySelectorAll(".plan-edit")].map(row=>({id:row.dataset.planId||newPlanId(),label:row.querySelector(".plan-label").value.trim(),price:row.querySelector(".plan-price").value.trim(),licenses:JSON.parse(row.dataset.licenses||"[]")})).filter(x=>x.label||x.price)}
-function renderLicenseManagement(){
-    const box=$("licenseManagement");if(!box)return;const rows=[...document.querySelectorAll(".plan-edit")];
-    if(!rows.length){box.innerHTML='<div class="license-empty">Add a plan above to manage its license keys.</div>';return}
-    box.innerHTML=rows.map((row,i)=>{const label=row.querySelector(".plan-label")?.value.trim()||`Plan ${i+1}`,a=JSON.parse(row.dataset.licenses||"[]");
-      return `<div class="license-plan"><div class="license-plan-head"><div class="license-plan-name">${esc(label)}</div><div class="license-plan-count">${a.length} AVAILABLE</div></div><div class="license-list">${a.length?a.map((key,k)=>`<div class="license-row"><code>${esc(key)}</code><button type="button" class="license-remove" title="Remove license" onclick="removeLicenseFromPlan(${i},${k})">×</button></div>`).join(""):'<div class="license-empty">No license keys added.</div>'}</div><button type="button" class="add-license-btn" onclick="promptAddLicense(${i})">+ ADD LICENSE</button></div>`;
-    }).join("");
-}
-function promptAddLicense(planIndex){
-    const rows=[...document.querySelectorAll(".plan-edit")],row=rows[planIndex];if(!row)return;const label=row.querySelector(".plan-label")?.value.trim()||`Plan ${planIndex+1}`;
-    const key=window.prompt(`Add license key for "${label}"`);if(key===null)return;const clean=key.trim();if(!clean){alert("License key cannot be empty.");return}
-    const a=JSON.parse(row.dataset.licenses||"[]");if(a.some(x=>String(x).toLowerCase()===clean.toLowerCase())){alert("This license key is already added.");return}
-    a.push(clean);row.dataset.licenses=JSON.stringify(a);renderLicenseManagement();
-}
-function removeLicenseFromPlan(planIndex,keyIndex){
-    const rows=[...document.querySelectorAll(".plan-edit")],row=rows[planIndex];if(!row)return;const a=JSON.parse(row.dataset.licenses||"[]");if(!a[keyIndex])return;
-    if(!confirm("Remove this license key?"))return;a.splice(keyIndex,1);row.dataset.licenses=JSON.stringify(a);renderLicenseManagement();
-}
+function collectPlans(){return [...document.querySelectorAll(".plan-edit")].map(row=>({id:row.dataset.planId||newPlanId(),label:row.querySelector(".plan-label").value.trim(),price:row.querySelector(".plan-price").value.trim(),credentialMode:row.dataset.credentialMode||"license",licenses:JSON.parse(row.dataset.licenses||"[]"),accounts:JSON.parse(row.dataset.accounts||"[]")})).filter(x=>x.label||x.price)}
+function renderLicenseManagement(){const box=$("licenseManagement");if(!box)return;const rows=[...document.querySelectorAll(".plan-edit")];if(!rows.length){box.innerHTML='<div class="license-empty">Add a plan above to manage delivery.</div>';return}box.innerHTML=rows.map((row,i)=>{const label=row.querySelector(".plan-label")?.value.trim()||`Plan ${i+1}`,mode=row.dataset.credentialMode||"license",a=JSON.parse(row.dataset.licenses||"[]"),ac=JSON.parse(row.dataset.accounts||"[]"),count=mode==="license"?a.length:mode==="userpass"?ac.length:0;const list=mode==="license"?(a.length?a.map((key,k)=>`<div class="license-row"><code>${esc(key)}</code><button type="button" class="license-remove" onclick="removeLicenseFromPlan(${i},${k})">×</button></div>`).join(""):"<div class=\"license-empty\">No license keys added.</div>"):(mode==="userpass"?(ac.length?ac.map((x,k)=>`<div class="license-row"><code>${esc(x.username||"")} : ${esc(x.password||"")}</code><button type="button" class="license-remove" onclick="removeAccountFromPlan(${i},${k})">×</button></div>`).join(""):"<div class=\"license-empty\">No user/password accounts added.</div>"):"<div class=\"license-empty\">Delivery disabled for this plan.</div>");return `<div class="license-plan"><div class="license-plan-head"><div class="license-plan-name">${esc(label)}</div><div class="license-plan-count">${count} AVAILABLE</div></div><div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><label style="margin:0;font-size:9px">DELIVERY</label><select onchange="setCredentialMode(${i},this.value)"><option value="license" ${mode==="license"?"selected":""}>LICENSE</option><option value="userpass" ${mode==="userpass"?"selected":""}>USER & PASSWORD</option><option value="off" ${mode==="off"?"selected":""}>OFF</option></select></div><div class="license-list">${list}</div>${mode!=="off"?`<div style="display:flex;gap:7px"><button type="button" class="add-license-btn" onclick="${mode==="license"?`promptAddLicense(${i})`:`promptAddAccount(${i})`}">+ ADD ${mode==="license"?"LICENSE":"USER/PASSWORD"}</button><button type="button" class="add-license-btn" onclick="importCredentialFile(${i})">IMPORT TXT</button></div>`:""}<div class="license-note">${mode==="license"?"One license key per line.":mode==="userpass"?"One account per line: username|password":"No credential will be delivered."}</div></div>`}).join("")}
+function setCredentialMode(i,mode){const row=[...document.querySelectorAll(".plan-edit")][i];if(!row)return;row.dataset.credentialMode=["license","userpass","off"].includes(mode)?mode:"license";renderLicenseManagement()}
+function promptAddLicense(i){const row=[...document.querySelectorAll(".plan-edit")][i];if(!row)return;const key=window.prompt(`Add license key for "${row.querySelector(".plan-label")?.value.trim()||`Plan ${i+1}`}"`);if(key===null)return;const clean=key.trim();if(!clean)return alert("License key cannot be empty.");const a=JSON.parse(row.dataset.licenses||"[]");if(a.some(x=>String(x).toLowerCase()===clean.toLowerCase()))return alert("This license key is already added.");a.push(clean);row.dataset.licenses=JSON.stringify(a);renderLicenseManagement()}
+function promptAddAccount(i){const row=[...document.querySelectorAll(".plan-edit")][i];if(!row)return;const u=window.prompt("Username:");if(u===null)return;const pw=window.prompt("Password:");if(pw===null)return;const username=u.trim(),password=pw.trim();if(!username||!password)return alert("Username and password are required.");const a=JSON.parse(row.dataset.accounts||"[]");if(a.some(x=>String(x.username).toLowerCase()===username.toLowerCase()))return alert("This username is already added.");a.push({username,password});row.dataset.accounts=JSON.stringify(a);renderLicenseManagement()}
+function removeLicenseFromPlan(i,k){const row=[...document.querySelectorAll(".plan-edit")][i];if(!row)return;const a=JSON.parse(row.dataset.licenses||"[]");if(!a[k])return;if(!confirm("Remove this license key?"))return;a.splice(k,1);row.dataset.licenses=JSON.stringify(a);renderLicenseManagement()}
+function removeAccountFromPlan(i,k){const row=[...document.querySelectorAll(".plan-edit")][i];if(!row)return;const a=JSON.parse(row.dataset.accounts||"[]");if(!a[k])return;if(!confirm("Remove this user/password account?"))return;a.splice(k,1);row.dataset.accounts=JSON.stringify(a);renderLicenseManagement()}
+let importPlanIndex=-1;function importCredentialFile(i){importPlanIndex=i;const input=$("licenseFileInput");input.value="";input.click()}
+$("licenseFileInput")?.addEventListener("change",async()=>{const file=$("licenseFileInput").files?.[0];if(!file||importPlanIndex<0)return;const row=[...document.querySelectorAll(".plan-edit")][importPlanIndex],mode=row?.dataset.credentialMode||"license";if(!row||mode==="off")return;const text=await file.text();let added=0,dupes=0;if(mode==="license"){const a=JSON.parse(row.dataset.licenses||"[]"),seen=new Set(a.map(x=>String(x).toLowerCase()));for(const raw of text.split(/\r?\n/)){const key=raw.trim();if(!key)continue;if(seen.has(key.toLowerCase())){dupes++;continue}seen.add(key.toLowerCase());a.push(key);added++}row.dataset.licenses=JSON.stringify(a)}else{const a=JSON.parse(row.dataset.accounts||"[]"),seen=new Set(a.map(x=>String(x.username).toLowerCase()));for(const raw of text.split(/\r?\n/)){const parts=raw.trim().split(/[|,]\s*/);if(parts.length<2)continue;const username=parts[0].trim(),password=parts.slice(1).join("|").trim();if(!username||!password)continue;if(seen.has(username.toLowerCase())){dupes++;continue}seen.add(username.toLowerCase());a.push({username,password});added++}row.dataset.accounts=JSON.stringify(a)}renderLicenseManagement();alert(`Imported ${added} ${mode==="license"?"license(s)":"account(s)"}.${dupes?` ${dupes} duplicate(s) skipped.`:""}`)})
 function renderContentEditor(){
-    const type=$("contentType").value;$("plansEditorWrap").style.display=(type==="plans"||type==="both")?"block":"none";
-    $("imageEditorWrap").classList.toggle("hidden",type!=="image"&&type!=="both");if(type==="image"||type==="both")updateImagePreview();renderLicenseManagement();
+    const type=$("contentType").value;
+    $("plansEditorWrap").style.display=(type==="plans" || type==="both")?"block":"none";
+    $("imageEditorWrap").classList.toggle("hidden",type!=="image" && type!=="both");
+    if(type==="image" || type==="both") updateImagePreview();
 }
+
 function updateImagePreview(){
     const preview=$("imagePreview");
     if(!preview)return;

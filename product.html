@@ -1107,12 +1107,7 @@
             }
 
             container.innerHTML = products.map(product => {
-                const plans = (product.plans || []).map(plan => `
-                    <div class="price-row">
-                        <span>${escapeHtml(plan.label)}</span>
-                        <span class="price">${escapeHtml(plan.price)}</span>
-                    </div>
-                `).join("");
+                const plans = (product.plans || []).map(plan => {const mode=plan.credentialMode||"license",available=mode==="license"?(Array.isArray(plan.licenses)?plan.licenses.length:0):mode==="userpass"?(Array.isArray(plan.accounts)?plan.accounts.length:0):0;return `<div class="price-row"><span>${escapeHtml(plan.label)}</span><span><span class="price">${escapeHtml(plan.price)}</span> <small style="color:${available?'#777':'#ff4444'};font-size:9px">${available?`${available} AVAILABLE`:'OUT OF STOCK'}</small></span></div>`;}).join("");
 
                 const imageProxy = product.imageUrl ? `/api/image-proxy?url=${encodeURIComponent(product.imageUrl)}` : "";
                 const imageMarkup = product.imageUrl
@@ -1272,12 +1267,7 @@
 
     function renderBuyPlans() {
         const plans = Array.isArray(buyCurrentProduct?.plans) ? buyCurrentProduct.plans : [];
-        buyPlanOptions.innerHTML = plans.map((plan, index) => `
-            <button type="button" class="buy-plan ${index === buySelectedPlanIndex ? "selected" : ""}" data-plan-index="${index}">
-                <span class="buy-plan-label">${escapeHtml(plan.label || `Package ${index + 1}`)}</span>
-                <span class="buy-plan-price">${escapeHtml(plan.price || "")}</span>
-            </button>
-        `).join("");
+        buyPlanOptions.innerHTML = plans.map((plan,index)=>{const mode=plan.credentialMode||"license",available=mode==="license"?(Array.isArray(plan.licenses)?plan.licenses.length:0):mode==="userpass"?(Array.isArray(plan.accounts)?plan.accounts.length:0):0;const disabled=mode!=="off"&&available<1;return `<button type="button" class="buy-plan ${index===buySelectedPlanIndex?"selected":""}" data-plan-index="${index}" ${disabled?'disabled':''}><span class="buy-plan-label">${escapeHtml(plan.label||`Package ${index+1}`)}</span><span class="buy-plan-price">${escapeHtml(plan.price||"")}<small style="display:block;color:${disabled?'#ff4444':'#777'};font-size:8px">${disabled?'OUT OF STOCK':`${available} AVAILABLE`}</small></span></button>`}).join("");
 
         buyPlanOptions.querySelectorAll(".buy-plan").forEach(button => {
             button.addEventListener("click", () => {
@@ -1323,6 +1313,10 @@
         const selectedPlan = (buyCurrentProduct.plans || [])[buySelectedPlanIndex];
         if (!selectedPlan) {
             buyError2.textContent = "Selected package is not available.";
+            return;
+        }
+        if (!Array.isArray(selectedPlan.licenses) || selectedPlan.licenses.length < 1) {
+            buyError2.textContent = "This plan is currently out of stock.";
             return;
         }
 
