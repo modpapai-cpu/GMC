@@ -752,6 +752,43 @@ app.put("/api/contacts", requireAdmin, async (req, res) => {
 });
 
 /* Public runtime config — never expose payment credentials. */
+/* Purchase logs — admin only. Returns completed purchases with delivery details. */
+app.get("/api/purchase-logs", requireAdmin, async (req, res) => {
+    try {
+        const snapshot = await db.collection(COLLECTIONS.purchases).get();
+        const logs = snapshot.docs
+            .map(doc => ({ id: doc.id, ...doc.data() }))
+            .filter(p => String(p.status || "").toLowerCase() === "paid")
+            .sort((a, b) => {
+                const ta = a.paidAt?.toMillis?.() || a.createdAt?.toMillis?.() || Number(a.paidAt || a.createdAt || 0) || 0;
+                const tb = b.paidAt?.toMillis?.() || b.createdAt?.toMillis?.() || Number(b.paidAt || b.createdAt || 0) || 0;
+                return tb - ta;
+            })
+            .map(p => {
+                const account = p.account && typeof p.account === "object" ? p.account : {};
+                const amount = Number(p.amountPaise || 0) / 100;
+                const planLabel = String(p.planLabel || "").trim();
+                return {
+                    id: p.id,
+                    customerName: String(p.customerName || "").trim(),
+                    email: String(p.customerEmail || "").trim(),
+                    username: p.credentialMode === "userpass" ? String(account.username || "").trim() : "",
+                    password: p.credentialMode === "userpass" ? String(account.password || "") : "",
+                    license: p.credentialMode === "license" ? String(p.licenseKey || "").trim() : "",
+                    productName: String(p.productName || "").trim(),
+                    planDetails: planLabel + (amount ? ` — ₹${amount.toLocaleString("en-IN")}` : ""),
+                    purchaseDate: p.paidAt?.toDate?.()?.toISOString?.() || p.createdAt?.toDate?.()?.toISOString?.() || null,
+                    paymentId: String(p.paymentId || "").trim(),
+                    testPayment: Boolean(p.testPayment)
+                };
+            });
+        res.json({ ok: true, logs });
+    } catch (error) {
+        console.error("PURCHASE LOGS ERROR:", error);
+        res.status(500).json({ message: "Unable to load purchase logs." });
+    }
+});
+
 app.get("/api/config", (req, res) => {
     res.json({
         ok: true,
