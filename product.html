@@ -899,7 +899,11 @@
     .qr-product,.qr-package,.qr-price{display:none !important}
 }
 
-    </style>
+    
+.buy-test { margin-top:10px; width:100%; padding:12px 16px; border:1px dashed #ff4444; border-radius:10px; background:#170505; color:#ff5555; font-weight:900; cursor:pointer; }
+.buy-test:hover { background:#220707; }
+.buy-test[hidden] { display:none !important; }
+</style>
 </head>
 
 <body>
@@ -1020,6 +1024,7 @@
                 <div class="buy-plans" id="buyPlanOptions"></div>
                 <div class="buy-error" id="buyError2"></div>
                 <button class="buy-primary" id="buyContinue2" type="button">CONTINUE TO PAYMENT</button>
+                <button class="buy-test" id="buyTestPayment" type="button" hidden>TEST PAYMENT — SEND EMAIL</button>
                 <button class="buy-secondary" id="buyBack1" type="button">BACK</button>
             </section>
 
@@ -1192,6 +1197,7 @@
     const buyError3 = document.getElementById("buyError3");
     const buyContinue1 = document.getElementById("buyContinue1");
     const buyContinue2 = document.getElementById("buyContinue2");
+    const buyTestPayment = document.getElementById("buyTestPayment");
     const buyBack1 = document.getElementById("buyBack1");
     const buyClose = document.getElementById("buyClose");
     const buyCloseAfter = document.getElementById("buyCloseAfter");
@@ -1253,7 +1259,19 @@
         buyContinue1.textContent = "CONTINUE";
         buyContinue2.disabled = false;
         buyContinue2.textContent = "CONTINUE TO PAYMENT";
+        if (buyTestPayment) buyTestPayment.hidden = true;
         showBuyStep(1);
+    }
+
+    async function loadPaymentConfig() {
+        if (!buyTestPayment) return;
+        try {
+            const response = await fetch("/api/config", { cache: "no-store" });
+            const cfg = await response.json().catch(() => ({}));
+            buyTestPayment.hidden = cfg.test_payment_enabled !== true;
+        } catch {
+            buyTestPayment.hidden = true;
+        }
     }
 
     function openBuyModal(product) {
@@ -1263,6 +1281,7 @@
         buyModal.classList.remove("hidden");
         buyModal.setAttribute("aria-hidden", "false");
         document.body.classList.add("lightbox-open");
+        loadPaymentConfig();
         setTimeout(() => buyName.focus(), 50);
     }
 
@@ -1424,6 +1443,67 @@
     }
 
     buyContinue2.addEventListener("click", createRazorpayQr);
+
+    async function createTestPayment() {
+        if (!buyCurrentProduct || buySelectedPlanIndex < 0) {
+            buyError2.textContent = "Please select a package.";
+            return;
+        }
+        const selectedPlan = (buyCurrentProduct.plans || [])[buySelectedPlanIndex];
+        if (!selectedPlan) { buyError2.textContent = "Selected package is not available."; return; }
+        const mode = selectedPlan.credentialMode || "license";
+        const available = mode === "license"
+            ? (Array.isArray(selectedPlan.licenses) ? selectedPlan.licenses.length : 0)
+            : mode === "userpass"
+                ? (Array.isArray(selectedPlan.accounts) ? selectedPlan.accounts.length : 0)
+                : 0;
+        if (mode === "off" || available < 1) {
+            buyError2.textContent = "This plan is currently unavailable.";
+            return;
+        }
+        if (!confirm("TEST PAYMENT\n\nThis will NOT charge real money. It will mark the order as paid and send the delivery email. Continue?")) return;
+        buyError2.textContent = "";
+        buyTestPayment.disabled = true;
+        buyTestPayment.textContent = "PROCESSING TEST PAYMENT...";
+        try {
+            const response = await fetch("/api/payment/test-success", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                cache: "no-store",
+                body: JSON.stringify({
+                    productId: buyCurrentProduct.id,
+                    planIndex: buySelectedPlanIndex,
+                    name: buyCustomer.name,
+                    email: buyCustomer.email
+                })
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok || !data.ok) throw new Error(data.message || "Test payment failed.");
+            buyQrProduct.textContent = data.productName || buyCurrentProduct.name || "—";
+            buyQrPackage.textContent = data.planLabel || selectedPlan.label || "—";
+            buyQrEmail.textContent = buyCustomer.email;
+            buyQrAmount.textContent = `₹${Number(data.amount || 0).toLocaleString("en-IN")}`;
+            buyQrStatus.textContent = "TEST PAYMENT VERIFIED — NO REAL MONEY CHARGED.";
+            buyQrWrap.style.display = "none";
+            buyQrLink.hidden = true;
+            const deliveryStatus = document.getElementById("buyEmailDeliveryStatus");
+            if (deliveryStatus) deliveryStatus.textContent = data.emailStatus === "sent"
+                ? `Test order email sent successfully to ${buyCustomer.email}.`
+                : `Test payment completed. Email status: ${data.emailStatus || "pending"}.`;
+            buySuccess.hidden = false;
+            buyCloseAfter.textContent = "CLOSE";
+            showBuyStep(3);
+        } catch (error) {
+            console.error("TEST PAYMENT ERROR:", error);
+            buyError2.textContent = error.message || "Test payment failed.";
+        } finally {
+            buyTestPayment.disabled = false;
+            buyTestPayment.textContent = "TEST PAYMENT — SEND EMAIL";
+        }
+    }
+
+    if (buyTestPayment) buyTestPayment.addEventListener("click", createTestPayment);
+
 
     async function checkBuyPayment() {
         if (!buyPurchaseId) return;

@@ -12,6 +12,7 @@ const ADMIN_EMAIL = "modpapai@gmail.com";
 const OTP_TTL = 5 * 60 * 1000;
 const SESSION_TTL = 15 * 60 * 1000;
 const MAX_OTP_ATTEMPTS = 5;
+const TEST_PAYMENT_ENABLED = String(process.env.TEST_PAYMENT_ENABLED || "false").toLowerCase() === "true";
 
 app.use(express.json({ limit: "200kb" }));
 app.use(express.urlencoded({ extended: false }));
@@ -739,6 +740,15 @@ app.put("/api/contacts", requireAdmin, async (req, res) => {
     }
 });
 
+/* Public runtime config — never expose payment credentials. */
+app.get("/api/config", (req, res) => {
+    res.json({
+        ok: true,
+        test_payment_enabled: TEST_PAYMENT_ENABLED,
+        buy_license_url: process.env.BUY_LICENSE_URL || ""
+    });
+});
+
 /* Products */
 app.get("/api/products", async (req, res) => {
     try {
@@ -850,6 +860,107 @@ app.delete("/api/products/:id", requireAdmin, async (req, res) => {
 /* Razorpay — customer-facing QR payment flow.
  * The amount is always read from the Firestore product on the server.
  */
+app.post("/api/payment/test-success", async (req, res) => {
+    if (!TEST_PAYMENT_ENABLED) {
+        return res.status(404).json({ message: "Test payment is disabled." });
+    }
+
+    try {
+        const productId = String(req.body?.productId || "").trim();
+        const planIndex = Number(req.body?.planIndex);
+        const customerName = String(req.body?.name || "").trim().slice(0, 120);
+        const customerEmail = cleanEmail(req.body?.email);
+
+        if (!productId || !Number.isInteger(planIndex) || planIndex < 0) {
+            return res.status(400).json({ message: "Invalid product or package." });
+        }
+        if (customerName.length < 2) return res.status(400).json({ message: "Enter your name." });
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customerEmail)) {
+            return res.status(400).json({ message: "Enter a valid email address." });
+        }
+
+        const product = await getDocument(COLLECTIONS.products, productId);
+        if (!product) return res.status(404).json({ message: "Product not found." });
+        const plans = Array.isArray(product.plans) ? product.plans : [];
+        const selectedPlan = plans[planIndex];
+        if (!selectedPlan) return res.status(400).json({ message: "Selected package is not available." });
+        const amountPaise = parsePlanAmount(selectedPlan.price);
+        if (!amountPaise) return res.status(400).json({ message: "This package does not have a valid numeric price." });
+
+        const purchaseRef = db.collection(COLLECTIONS.purchases).doc();
+        let reservedLicenseKey = "";
+        let reservedAccount = null;
+        let credentialMode = "license";
+
+        await db.runTransaction(async tx => {
+            const pref = db.collection(COLLECTIONS.products).doc(productId);
+            const snap = await tx.get(pref);
+            if (!snap.exists) throw new Error("Product not found.");
+            const data = snap.data();
+            const pp = Array.isArray(data.plans) ? data.plans.map(p => ({
+                ...p,
+                licenses: Array.isArray(p?.licenses) ? p.licenses.slice() : [],
+                accounts: Array.isArray(p?.accounts) ? p.accounts.map(x => ({ ...x })) : []
+            })) : [];
+            const plan = pp[planIndex];
+            if (!plan) throw new Error("Selected package is not available.");
+            credentialMode = ["license", "userpass", "off"].includes(plan.credentialMode) ? plan.credentialMode : "license";
+            if (credentialMode === "off") throw new Error("This plan is currently disabled.");
+            if (credentialMode === "license") {
+                if (!plan.licenses.length) throw new Error("This plan is currently out of stock.");
+                reservedLicenseKey = String(plan.licenses.shift()).trim();
+            } else if (credentialMode === "userpass") {
+                if (!plan.accounts.length) throw new Error("This plan is currently out of stock.");
+                reservedAccount = plan.accounts.shift();
+            }
+            tx.update(pref, { plans: pp });
+        });
+
+        const downloadUrl = String(product.downloadUrl || "").trim();
+        await purchaseRef.set({
+            productId,
+            productName: String(product.name || ""),
+            planIndex,
+            planLabel: String(selectedPlan.label || `Package ${planIndex + 1}`),
+            amountPaise,
+            customerName,
+            customerEmail,
+            status: "paid",
+            paymentId: `TEST_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`,
+            licenseKey: credentialMode === "license" ? (reservedLicenseKey || null) : null,
+            account: credentialMode === "userpass" ? reservedAccount : null,
+            credentialMode,
+            downloadUrl,
+            testPayment: true,
+            paidAt: adminSdk.firestore.FieldValue.serverTimestamp()
+        });
+
+        let emailStatus = "pending";
+        try {
+            const delivery = await deliverPurchaseEmail(purchaseRef.id);
+            emailStatus = delivery.sent || delivery.alreadySent ? "sent" : (delivery.claimedByOther ? "sending" : "pending");
+        } catch (emailError) {
+            console.error("TEST PURCHASE DELIVERY EMAIL FAILED:", emailError);
+            emailStatus = "failed";
+        }
+
+        return res.json({
+            ok: true,
+            testPayment: true,
+            status: "paid",
+            purchaseId: purchaseRef.id,
+            amount: amountPaise / 100,
+            productName: String(product.name || ""),
+            planLabel: String(selectedPlan.label || ""),
+            emailStatus,
+            downloadUrl: downloadUrl || null
+        });
+    } catch (error) {
+        console.error("TEST PAYMENT FAILED:", error);
+        return res.status(400).json({ message: error.message || "Unable to complete test payment." });
+    }
+});
+
 app.post("/api/payment/qr", async (req, res) => {
     try {
         const productId = String(req.body?.productId || "").trim();
