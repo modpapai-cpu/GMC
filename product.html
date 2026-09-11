@@ -1083,7 +1083,15 @@
         }
 
         if (product.buyEnabled) {
-            buttons.push({ text: "BUY", link: "#", isBuy: true });
+            const hasPurchasablePlan = (Array.isArray(product.plans) ? product.plans : []).some(plan => {
+                const mode = plan.credentialMode || "license";
+                if (mode === "off") return true;
+                if (mode === "userpass") return Array.isArray(plan.accounts) && plan.accounts.length > 0;
+                return Array.isArray(plan.licenses) && plan.licenses.length > 0;
+            });
+            if (hasPurchasablePlan) {
+                buttons.push({ text: "BUY", link: "#", isBuy: true });
+            }
         }
         return buttons;
     }
@@ -1265,20 +1273,53 @@
         document.body.classList.remove("lightbox-open");
     }
 
+    function getPlanAvailability(plan) {
+        const mode = plan?.credentialMode || "license";
+        if (mode === "off") return 1; // OFF does not require inventory.
+        if (mode === "userpass") return Array.isArray(plan?.accounts) ? plan.accounts.length : 0;
+        return Array.isArray(plan?.licenses) ? plan.licenses.length : 0;
+    }
+
     function renderBuyPlans() {
         const plans = Array.isArray(buyCurrentProduct?.plans) ? buyCurrentProduct.plans : [];
-        buyPlanOptions.innerHTML = plans.map((plan,index)=>{const mode=plan.credentialMode||"license",available=mode==="license"?(Array.isArray(plan.licenses)?plan.licenses.length:0):mode==="userpass"?(Array.isArray(plan.accounts)?plan.accounts.length:0):0;const disabled=mode!=="off"&&available<1;return `<button type="button" class="buy-plan ${index===buySelectedPlanIndex?"selected":""}" data-plan-index="${index}" ${disabled?'disabled':''}><span class="buy-plan-label">${escapeHtml(plan.label||`Package ${index+1}`)}</span><span class="buy-plan-price">${escapeHtml(plan.price||"")}<small style="display:block;color:${disabled?'#ff4444':'#777'};font-size:8px">${disabled?'OUT OF STOCK':`${available} AVAILABLE`}</small></span></button>`}).join("");
 
-        buyPlanOptions.querySelectorAll(".buy-plan").forEach(button => {
+        // Automatically select the first package that can actually be purchased.
+        const firstAvailable = plans.findIndex(plan => getPlanAvailability(plan) > 0);
+        if (buySelectedPlanIndex < 0 || getPlanAvailability(plans[buySelectedPlanIndex]) < 1) {
+            buySelectedPlanIndex = firstAvailable;
+        }
+
+        const hasAvailable = firstAvailable >= 0;
+        buyPlanOptions.innerHTML = plans.map((plan,index)=>{
+            const mode = plan?.credentialMode || "license";
+            const available = getPlanAvailability(plan);
+            const disabled = available < 1;
+            const selected = index === buySelectedPlanIndex && !disabled;
+            const availabilityText = mode === "off" ? "AVAILABLE" : disabled ? "OUT OF STOCK" : `${available} AVAILABLE`;
+            return `<button type="button" class="buy-plan ${selected ? "selected" : ""}" data-plan-index="${index}" ${disabled ? "disabled" : ""}>`
+                + `<span class="buy-plan-label">${escapeHtml(plan.label || `Package ${index+1}`)}</span>`
+                + `<span class="buy-plan-price">${escapeHtml(plan.price || "")}<small style="display:block;color:${disabled?'#ff4444':'#777'};font-size:8px">${availabilityText}</small></span>`
+                + `</button>`;
+        }).join("");
+
+        buyContinue2.disabled = !hasAvailable;
+        buyContinue2.textContent = hasAvailable ? "CONTINUE TO PAYMENT" : "OUT OF STOCK";
+
+        buyPlanOptions.querySelectorAll(".buy-plan:not([disabled])").forEach(button => {
             button.addEventListener("click", () => {
                 buySelectedPlanIndex = Number(button.dataset.planIndex);
                 buyPlanOptions.querySelectorAll(".buy-plan").forEach(x => x.classList.remove("selected"));
                 button.classList.add("selected");
                 buyError2.textContent = "";
+                buyContinue2.disabled = false;
+                buyContinue2.textContent = "CONTINUE TO PAYMENT";
             });
         });
-    }
 
+        if (!hasAvailable) {
+            buyError2.textContent = "All packages are currently out of stock.";
+        }
+    }
     buyContinue1.addEventListener("click", () => {
         const name = buyName.value.trim();
         const email = buyEmail.value.trim().toLowerCase();
