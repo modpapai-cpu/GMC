@@ -569,34 +569,64 @@
 
         .product-description {
             color: #666;
-
             font-size: 12px;
-
             line-height: 1.7;
 
-            min-height: 43px;
-
+            /* Keep the description area identical on every product card. */
+            height: 86px;
+            min-height: 86px;
             margin-bottom: 22px;
+            box-sizing: border-box;
+
+            /* Preserve Enter/new lines entered from the admin panel. */
+            white-space: pre-line;
+            overflow-wrap: anywhere;
+            overflow-y: auto;
+            padding-right: 4px;
+        }
+
+        .product-description::-webkit-scrollbar,
+        .pricing::-webkit-scrollbar {
+            width: 3px;
+        }
+
+        .product-description::-webkit-scrollbar-thumb,
+        .pricing::-webkit-scrollbar-thumb {
+            background: #333;
+            border-radius: 10px;
         }
 
         /* ================= PRICES ================= */
 
         .pricing {
-            padding: 17px 0;
+            /* Fixed product-content area so every card has the same layout. */
+            height: 145px;
+            min-height: 145px;
+            box-sizing: border-box;
+            padding: 10px 0;
 
             border-top: 1px solid #1c1c1c;
             border-bottom: 1px solid #1c1c1c;
 
             margin-bottom: 20px;
+            overflow-y: auto;
         }
 
         .pricing.image-content {
+            height: 145px;
             min-height: 145px;
             padding: 10px 0;
             display: flex;
             align-items: center;
             justify-content: center;
             overflow: hidden;
+        }
+
+
+        .pricing.plans-content {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
         }
 
         .pricing.image-content img {
