@@ -369,6 +369,10 @@
         .product-card {
             position: relative;
 
+            /* Keep every product card's action buttons aligned at the bottom. */
+            display: flex;
+            flex-direction: column;
+
             padding: 28px;
 
             min-height: 420px;
@@ -688,6 +692,8 @@
             display: grid;
             grid-template-columns: 1fr;
             gap: 8px;
+            margin-top: auto;
+            padding-top: 20px;
         }
 
         .product-buttons.two {
