@@ -1315,7 +1315,14 @@
             buyError2.textContent = "Selected package is not available.";
             return;
         }
-        if (!Array.isArray(selectedPlan.licenses) || selectedPlan.licenses.length < 1) {
+        const mode = selectedPlan.credentialMode || "license";
+        const available = mode === "license"
+            ? (Array.isArray(selectedPlan.licenses) ? selectedPlan.licenses.length : 0)
+            : mode === "userpass"
+                ? (Array.isArray(selectedPlan.accounts) ? selectedPlan.accounts.length : 0)
+                : 0;
+
+        if (mode !== "off" && available < 1) {
             buyError2.textContent = "This plan is currently out of stock.";
             return;
         }
