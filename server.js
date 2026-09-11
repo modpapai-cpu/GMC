@@ -144,7 +144,14 @@ async function seedFromJsonFiles() {
 
 async function loadProducts() {
     const products = await loadCollection(COLLECTIONS.products);
-    return products;
+    return products.sort((a, b) => {
+        const ao = Number.isFinite(Number(a.order)) ? Number(a.order) : Number.POSITIVE_INFINITY;
+        const bo = Number.isFinite(Number(b.order)) ? Number(b.order) : Number.POSITIVE_INFINITY;
+        if (ao !== bo) return ao - bo;
+        const ac = String(a.createdAt || "");
+        const bc = String(b.createdAt || "");
+        return ac.localeCompare(bc);
+    });
 }
 
 async function loadAdmins() {
@@ -796,7 +803,8 @@ app.post("/api/products", requireAdmin, async (req, res) => {
                 ? body.buttons.slice(0, 2)
                 : [{ text: String(body.buttonText || "GET PRODUCT"), link: String(body.buttonLink || "#") }],
             buyEnabled: Boolean(body.buyEnabled),
-            createdAt: new Date().toISOString()
+            createdAt: new Date().toISOString(),
+            order: Date.now()
         };
 
         await db.collection(COLLECTIONS.products).doc(product.id).set(product);
@@ -804,6 +812,34 @@ app.post("/api/products", requireAdmin, async (req, res) => {
     } catch (error) {
         console.error("PRODUCT ADD ERROR:", error);
         res.status(500).json({ message: "Unable to save product." });
+    }
+});
+
+app.post("/api/products/reorder", requireAdmin, async (req, res) => {
+    try {
+        const productIds = Array.isArray(req.body?.productIds)
+            ? req.body.productIds.map(x => String(x).trim()).filter(Boolean)
+            : [];
+        if (!productIds.length) return res.status(400).json({ message: "No product order received." });
+
+        const uniqueIds = [...new Set(productIds)];
+        const snapshot = await db.collection(COLLECTIONS.products).get();
+        const existingIds = snapshot.docs.map(doc => doc.id);
+        const existingSet = new Set(existingIds);
+        if (uniqueIds.length !== existingIds.length || uniqueIds.some(id => !existingSet.has(id))) {
+            return res.status(400).json({ message: "Product list changed. Please refresh and try again." });
+        }
+
+        await db.runTransaction(async tx => {
+            for (let i = 0; i < uniqueIds.length; i++) {
+                tx.update(db.collection(COLLECTIONS.products).doc(uniqueIds[i]), { order: i });
+            }
+        });
+
+        res.json({ ok: true, products: await loadProducts() });
+    } catch (error) {
+        console.error("PRODUCT REORDER ERROR:", error);
+        res.status(500).json({ message: "Unable to save product order." });
     }
 });
 
