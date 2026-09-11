@@ -773,6 +773,26 @@
             font-size: 11px;
         }
 
+        footer .footer-links {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px 28px;
+            flex-wrap: wrap;
+            margin-left: 28px;
+        }
+
+        footer .footer-links a {
+            color: #777;
+            text-decoration: none;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+
+        footer .footer-links a:hover {
+            color: #ff2929;
+        }
+
         footer strong {
             color: #ff2222;
         }
@@ -1646,3 +1666,9 @@
 
 </body>
 </html>
+<style>
+@media(max-width:700px){
+  footer{flex-direction:column;gap:12px;text-align:center;padding:24px 18px 28px;}
+  footer .footer-links{margin-left:0;gap:10px 22px;}
+}
+</style>
