@@ -812,7 +812,12 @@ app.get("/api/purchase-logs", requireAdmin, async (req, res) => {
         const snapshot = await db.collection(COLLECTIONS.purchases).get();
         const logs = snapshot.docs
             .map(doc => ({ id: doc.id, ...doc.data() }))
-            .filter(p => ["paid", "refund"].includes(String(p.status || "").toLowerCase()))
+            // Show all customer-visible payment states. "creating" is an
+            // internal pre-Cashfree state and is intentionally hidden.
+            .filter(p => {
+                const status = String(p.status || "").toLowerCase().trim();
+                return status && status !== "creating";
+            })
             .sort((a, b) => {
                 const ta = a.paidAt?.toMillis?.() || a.createdAt?.toMillis?.() || Number(a.paidAt || a.createdAt || 0) || 0;
                 const tb = b.paidAt?.toMillis?.() || b.createdAt?.toMillis?.() || Number(b.paidAt || b.createdAt || 0) || 0;
@@ -833,8 +838,9 @@ app.get("/api/purchase-logs", requireAdmin, async (req, res) => {
                     productName: String(p.productName || "").trim(),
                     planDetails: planLabel + (amount ? ` — ₹${amount.toLocaleString("en-IN")}` : ""),
                     purchaseDate: p.paidAt?.toDate?.()?.toISOString?.() || p.createdAt?.toDate?.()?.toISOString?.() || null,
-                    paymentId: String(p.paymentId || "").trim(),
-                    status: String(p.status || "").toLowerCase() === "refund" ? "refund" : "paid",
+                    paymentId: String(p.paymentId || p.lastPaymentId || "").trim(),
+                    status: String(p.status || "pending").toLowerCase().trim(),
+                    paymentMessage: String(p.paymentMessage || p.error || p.paymentFailureReason || "").trim(),
                     refundAmount: Number(p.refundAmountPaise || 0) / 100,
                     refundId: String(p.refundId || p.cashfreeRefundId || "").trim(),
                     refundedAt: p.refundedAt?.toDate?.()?.toISOString?.() || p.refundUpdatedAt?.toDate?.()?.toISOString?.() || null,
@@ -1035,12 +1041,49 @@ app.post("/api/webhooks/cashfree", async (req, res) => {
             return res.json({ ok: true, received: true, status: "refund" });
         }
 
-        if (eventType !== "PAYMENT_SUCCESS_WEBHOOK") return res.json({ ok: true, ignored: true });
         const orderId = String(payload?.data?.order?.order_id || "").trim();
         const payment = payload?.data?.payment || {};
+        const paymentStatus = String(payment.payment_status || "").trim().toUpperCase();
         const paymentId = String(payment.cf_payment_id || "").trim();
+
+        // Cashfree sends separate webhooks for failed payments and for users
+        // who drop out of the payment flow. Keep these attempts visible in
+        // GMC logs, while still allowing a later successful retry to become PAID.
+        const nonSuccessStatuses = {
+            "PAYMENT_FAILED_WEBHOOK": "failed",
+            "PAYMENT_USER_DROPPED_WEBHOOK": "user_dropped"
+        };
+        if (Object.prototype.hasOwnProperty.call(nonSuccessStatuses, eventType)) {
+            if (!orderId) return res.json({ ok: true, ignored: true });
+            const snapshot = await db.collection(COLLECTIONS.purchases).where("cashfreeOrderId", "==", orderId).limit(1).get();
+            if (snapshot.empty) return res.status(202).json({ ok: true, ignored: true, reason: "purchase_not_found" });
+            const purchaseRef = snapshot.docs[0].ref;
+            const current = snapshot.docs[0].data();
+            // Never downgrade a purchase that has already become paid/refunded.
+            if (current.status === "paid" || current.status === "refund") {
+                return res.json({ ok: true, ignored: true, reason: "already_final" });
+            }
+            const errorDetails = payload?.data?.error_details || {};
+            const message = String(
+                payment.payment_message ||
+                errorDetails.error_description ||
+                errorDetails.error_reason ||
+                (eventType === "PAYMENT_USER_DROPPED_WEBHOOK" ? "User dropped payment." : "Payment failed.")
+            ).trim();
+            await purchaseRef.update({
+                status: nonSuccessStatuses[eventType],
+                lastPaymentId: paymentId || null,
+                paymentStatus,
+                paymentMessage: message,
+                paymentFailureReason: String(errorDetails.error_reason || "").trim(),
+                paymentUpdatedAt: adminSdk.firestore.FieldValue.serverTimestamp()
+            });
+            return res.json({ ok: true, received: true, status: nonSuccessStatuses[eventType] });
+        }
+
+        if (eventType !== "PAYMENT_SUCCESS_WEBHOOK") return res.json({ ok: true, ignored: true });
         const paymentAmount = Number(payment.payment_amount || 0);
-        if (!orderId || payment.payment_status !== "SUCCESS") return res.json({ ok: true, ignored: true });
+        if (!orderId || paymentStatus !== "SUCCESS") return res.json({ ok: true, ignored: true });
         const snapshot = await db.collection(COLLECTIONS.purchases).where("cashfreeOrderId", "==", orderId).limit(1).get();
         if (snapshot.empty) return res.status(202).json({ ok: true, ignored: true, reason: "purchase_not_found" });
         const purchaseId = snapshot.docs[0].id;
