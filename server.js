@@ -5,6 +5,8 @@ const fs = require("fs");
 const path = require("path");
 
 const app = express();
+// Render terminates TLS at the proxy. Trust the proxy and use an explicit public HTTPS origin for Cashfree.
+app.set("trust proxy", 1);
 const PORT = process.env.PORT || 3000;
 const ADMIN_EMAIL = "modpapai@gmail.com";
 const OTP_TTL = 5 * 60 * 1000;
@@ -210,6 +212,15 @@ const CASHFREE_CLIENT_SECRET = process.env.CASHFREE_CLIENT_SECRET || process.env
 const CASHFREE_ENV = String(process.env.CASHFREE_ENV || "PRODUCTION").toUpperCase() === "SANDBOX" ? "SANDBOX" : "PRODUCTION";
 const CASHFREE_API_VERSION = "2025-01-01";
 const CASHFREE_ORDER_TTL_SECONDS = Math.max(300, Number(process.env.CASHFREE_ORDER_TTL_SECONDS || 900));
+const PUBLIC_BASE_URL = String(process.env.PUBLIC_BASE_URL || "https://gmc-xduf.onrender.com").trim().replace(/\/$/, "");
+
+function getPublicBaseUrl(req) {
+    // Cashfree requires HTTPS return_url/notify_url. PUBLIC_BASE_URL is preferred;
+    // otherwise derive the host while forcing HTTPS (required behind Render proxy).
+    if (/^https:\/\//i.test(PUBLIC_BASE_URL)) return PUBLIC_BASE_URL;
+    const host = req.get("x-forwarded-host") || req.get("host");
+    return `https://${host}`.replace(/\/$/, "");
+}
 
 function cashfreeBaseUrl() {
     return CASHFREE_ENV === "SANDBOX" ? "https://sandbox.cashfree.com/pg" : "https://api.cashfree.com/pg";
@@ -1108,7 +1119,7 @@ app.post("/api/payment/qr", async (req, res) => {
         const cashfreeOrderId = `gmc_${purchaseId}`.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 45);
         await purchaseRef.set({ productId, productName: String(product.name || ""), planIndex, planLabel: String(selectedPlan.label || `Package ${planIndex + 1}`), amountPaise, customerName, customerEmail, customerPhone, reservedLicenseKey, reservedAccount, credentialMode, downloadUrl: String(product.downloadUrl || "").trim(), status: "creating", createdAt: adminSdk.firestore.FieldValue.serverTimestamp(), expiresAt, cashfreeOrderId });
         try {
-            const origin = `${req.protocol}://${req.get("host")}`;
+            const origin = getPublicBaseUrl(req);
             const order = await cashfreeRequest("/orders", { method: "POST", headers: { "x-request-id": purchaseId, "x-idempotency-key": crypto.randomUUID() }, body: JSON.stringify({ order_id: cashfreeOrderId, order_amount: amountPaise / 100, order_currency: "INR", customer_details: { customer_id: `gmc_${purchaseId}`, customer_name: customerName, customer_email: customerEmail, customer_phone: customerPhone }, order_meta: { return_url: `${origin}/product.html?cashfree_order_id=${encodeURIComponent(cashfreeOrderId)}`, notify_url: `${origin}/api/webhooks/cashfree` }, order_expiry_time: new Date(expiresAt).toISOString(), order_note: `${String(product.name || "GMC").slice(0, 80)} - ${String(selectedPlan.label || "Package").slice(0, 80)}`, order_tags: { purchase_id: purchaseId, product_id: productId } }) });
             const sessionId = String(order.payment_session_id || "").trim();
             if (!sessionId) throw new Error("Cashfree did not return a payment session.");
