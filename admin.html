@@ -45,8 +45,8 @@ body.session-checking nav{
 <div class="icon">🛡</div>
 
 <div id="emailStep">
-<div class="heading"><span>GMC CONTROL PANEL</span><h1>ADMIN ACCESS</h1><p>OTP verification for authorized admins</p></div>
-<div class="field"><label>ADMIN EMAIL</label><input id="email" type="email" value="" placeholder="Enter admin email" autocomplete="email"></div>
+<div class="heading"><span>GMC CONTROL PANEL</span><h1>ADMIN / RESELLER ACCESS</h1><p>Enter your authorized email. Admins and resellers use email OTP verification.</p></div>
+<div class="field"><label>EMAIL</label><input id="email" type="email" value="" placeholder="Enter admin or reseller email" autocomplete="email"></div>
 <button id="sendBtn" onclick="sendOTP()">SEND OTP</button>
 <div id="emailMsg" class="msg"></div>
 </div>
@@ -77,21 +77,13 @@ async function post(url,data){
 }
 async function checkExistingSession(){
     try{
-        const r = await fetch("/api/admin-status", {
-            cache: "no-store"
-        });
-
+        const r = await fetch("/api/site-session", {cache:"no-store", credentials:"same-origin"});
         const j = await r.json();
-
         if(j.authenticated){
-            location.replace("admin-dashboard.html");
+            location.replace(j.type === "reseller" ? "first.html" : "admin-dashboard.html");
             return;
         }
-    }catch(e){
-        console.error("Session check failed:", e);
-    }
-
-    // Not logged in → show login page
+    }catch(e){ console.error("Session check failed:",e); }
     document.body.classList.remove("session-checking");
 }
 
@@ -118,14 +110,14 @@ async function verifyOTP(){
   const email=document.getElementById("email").value.trim().toLowerCase();
  const j=await post("/api/verify-otp",{email,otp});
   m.className="msg success";m.textContent=j.message;
-  setTimeout(() => { location.href = "admin-dashboard.html"; }, 250);
+  setTimeout(() => { location.href = j.role === "reseller" ? "first.html" : "admin-dashboard.html"; }, 250);
   document.getElementById("otpStep").classList.add("hidden");
   document.getElementById("dashboard").classList.remove("hidden");
  }catch(e){m.className="msg";m.textContent=e.message;b.disabled=false}
 }
 async function logout(){
  try{
-  await fetch("/api/logout",{method:"POST",cache:"no-store",credentials:"same-origin"});
+  await fetch("/api/auth-logout",{method:"POST",cache:"no-store",credentials:"same-origin"});
  }catch(e){
   console.error("Logout error:", e);
  }finally{

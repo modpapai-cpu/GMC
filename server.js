@@ -515,42 +515,33 @@ console.log("MAIL FROM:", MAIL_FROM);
 app.post("/api/send-otp", async (req, res) => {
     const email = cleanEmail(req.body.email);
     console.log("OTP REQUEST:", email);
-
     try {
-        if (!email || !(await isAllowedAdmin(email))) {
-            return res.status(403).json({ message: "This email is not authorized for admin access." });
+        const adminAllowed = email && await isAllowedAdmin(email);
+        const reseller = !adminAllowed && email ? await getResellerByEmail(email) : null;
+        if (!adminAllowed && (!reseller || reseller.active === false)) {
+            return res.status(403).json({ message: "This email is not authorized for admin or reseller access." });
         }
-
         if (!MAILJET_API_KEY || !MAILJET_SECRET_KEY) {
             return res.status(500).json({ message: "Mailjet email service is not configured." });
         }
-
         const otp = crypto.randomInt(100000, 1000000).toString();
         const otpDocId = encodeURIComponent(email);
         const otpHash = crypto.createHash("sha256").update(otp).digest("hex");
-
+        const role = adminAllowed ? (getRole(email) === "super" ? "super" : "admin") : "reseller";
         await db.collection(COLLECTIONS.otps).doc(otpDocId).set({
-            email,
-            hash: otpHash,
-            expires: Date.now() + OTP_TTL,
-            attempts: 0,
+            email, hash: otpHash, role, expires: Date.now() + OTP_TTL, attempts: 0,
             createdAt: adminSdk.firestore.FieldValue.serverTimestamp()
         });
-
-        const roleName = getRole(email) === "super" ? "Super Admin" : "Admin";
-
+        const roleName = role === "super" ? "Super Admin" : role === "admin" ? "Admin" : "Reseller";
         try {
             await sendEmail({
                 to: email,
-                subject: "GMC Admin Login OTP",
-                textPart: `Your GMC ${roleName} verification code is: ${otp}
-
-This OTP expires in 5 minutes. If you did not request this code, ignore this email.`,
-                htmlPart: `<div style="font-family:Arial,sans-serif;background:#080808;color:#fff;padding:30px"><div style="max-width:500px;margin:auto;border:1px solid #ff2222;border-radius:14px;padding:28px;background:#0d0d0d"><h2 style="color:#ff2222;margin-top:0">GMC ADMIN</h2><p>Your ${escapeHtml(roleName)} verification code is:</p><div style="font-size:34px;font-weight:900;letter-spacing:8px;color:#fff;background:#151515;border:1px solid #333;border-radius:10px;padding:16px;text-align:center">${otp}</div><p style="color:#999">This OTP expires in 5 minutes and can only be used once.</p></div></div>`
+                subject: `GMC ${roleName} Login OTP`,
+                textPart: `Your GMC ${roleName} verification code is: ${otp}\n\nThis OTP expires in 5 minutes and can only be used once. If you did not request this code, ignore this email.`,
+                htmlPart: `<div style="font-family:Arial,sans-serif;background:#080808;color:#fff;padding:30px"><div style="max-width:500px;margin:auto;border:1px solid #ff2222;border-radius:14px;padding:28px;background:#0d0d0d"><h2 style="color:#ff2222;margin-top:0">GMC ${escapeHtml(roleName).toUpperCase()}</h2><p>Your verification code is:</p><div style="font-size:34px;font-weight:900;letter-spacing:8px;color:#fff;background:#151515;border:1px solid #333;border-radius:10px;padding:16px;text-align:center">${otp}</div><p style="color:#999">This OTP expires in 5 minutes and can only be used once.</p></div></div>`
             });
-
-            console.log("OTP EMAIL SENT TO:", email);
-            return res.json({ message: `OTP sent to ${email}.` });
+            console.log(`${roleName.toUpperCase()} OTP EMAIL SENT TO:`, email);
+            return res.json({ message: `OTP sent to ${email}.`, role });
         } catch (error) {
             await db.collection(COLLECTIONS.otps).doc(otpDocId).delete().catch(() => {});
             console.error("EMAIL SEND FAILED:", error);
@@ -565,43 +556,33 @@ This OTP expires in 5 minutes. If you did not request this code, ignore this ema
 app.post("/api/verify-otp", async (req, res) => {
     const email = cleanEmail(req.body.email);
     const otp = String(req.body.otp || "").trim();
-
     try {
-        if (!(await isAllowedAdmin(email))) {
-            return res.status(403).json({ message: "This email is not authorized for admin access." });
+        const adminAllowed = email && await isAllowedAdmin(email);
+        const reseller = !adminAllowed && email ? await getResellerByEmail(email) : null;
+        if (!adminAllowed && (!reseller || reseller.active === false)) {
+            return res.status(403).json({ message: "This email is not authorized for admin or reseller access." });
         }
-
         const otpDocId = encodeURIComponent(email);
         const ref = db.collection(COLLECTIONS.otps).doc(otpDocId);
         const snapshot = await ref.get();
-
-        if (!snapshot.exists) {
-            return res.status(400).json({ message: "No OTP requested for this email." });
-        }
-
+        if (!snapshot.exists) return res.status(400).json({ message: "No OTP requested for this email." });
         const otpData = snapshot.data();
-
-        if (Date.now() >= otpData.expires) {
-            await ref.delete();
-            return res.status(400).json({ message: "OTP expired. Request a new OTP." });
-        }
-
-        if ((otpData.attempts || 0) >= MAX_OTP_ATTEMPTS) {
-            await ref.delete();
-            return res.status(429).json({ message: "Too many attempts. Request a new OTP." });
-        }
-
+        if (Date.now() >= otpData.expires) { await ref.delete(); return res.status(400).json({ message: "OTP expired. Request a new OTP." }); }
+        if ((otpData.attempts || 0) >= MAX_OTP_ATTEMPTS) { await ref.delete(); return res.status(429).json({ message: "Too many attempts. Request a new OTP." }); }
         const nextAttempts = (otpData.attempts || 0) + 1;
         await ref.update({ attempts: nextAttempts });
-
         const hash = crypto.createHash("sha256").update(otp).digest("hex");
-        if (hash !== otpData.hash) {
-            return res.status(401).json({ message: "Invalid OTP." });
-        }
-
+        if (hash !== otpData.hash) return res.status(401).json({ message: "Invalid OTP." });
         await ref.delete();
-
-        const role = getRole(email);
+        const role = adminAllowed ? (getRole(email) === "super" ? "super" : "admin") : "reseller";
+        if (role === "reseller") {
+            const token = crypto.randomBytes(32).toString("hex");
+            const expiresAt = Date.now() + 24 * 60 * 60 * 1000;
+            await db.collection(COLLECTIONS.resellerSessions).doc(token).set({ resellerId: reseller.id, email: reseller.email, expiresAt, createdAt: adminSdk.firestore.FieldValue.serverTimestamp() });
+            const secure = process.env.NODE_ENV === "production" || String(process.env.PUBLIC_BASE_URL || "").startsWith("https://") ? "; Secure" : "";
+            res.setHeader("Set-Cookie", `gmc_reseller_session=${token}; Max-Age=86400; Path=/; HttpOnly; SameSite=Lax${secure}`);
+            return res.json({ message: "OTP verified. Reseller access granted.", role, email, reseller: { id: reseller.id, name: reseller.name, email: reseller.email, discountPercent: Number(reseller.discountPercent || 0), productIds: Array.isArray(reseller.productIds) ? reseller.productIds : [] } });
+        }
         const expiresAt = await createSession(res, email, role);
         console.log(`${role.toUpperCase()} LOGIN SUCCESS — SESSION 15 MINUTES — ${email}`);
         return res.json({ message: "OTP verified. Admin access granted.", expiresAt, role, email });
@@ -711,6 +692,33 @@ app.get("/api/admin-status", async (req, res) => {
     }
 });
 
+app.get("/api/site-session", async (req, res) => {
+    try {
+        const adminSession = await getSession(req);
+        if (adminSession) return res.json({ authenticated: true, type: "admin", role: adminSession.role, email: adminSession.email });
+        const resellerSession = await getResellerSession(req);
+        if (resellerSession) {
+            const reseller = await getDocument(COLLECTIONS.resellers, resellerSession.resellerId);
+            if (reseller && reseller.active !== false) return res.json({ authenticated: true, type: "reseller", role: "reseller", email: reseller.email, reseller: { id: reseller.id, name: reseller.name, email: reseller.email, discountPercent: Number(reseller.discountPercent || 0), productIds: Array.isArray(reseller.productIds) ? reseller.productIds : [] } });
+        }
+        res.json({ authenticated: false, type: null, role: null, email: null });
+    } catch (error) { console.error("SITE SESSION ERROR:", error); res.status(500).json({ authenticated: false, type: null, role: null, email: null }); }
+});
+
+app.post("/api/auth-logout", async (req, res) => {
+    try {
+        const adminSession = await getSession(req);
+        if (adminSession) await db.collection(COLLECTIONS.sessions).doc(adminSession.token).delete().catch(() => {});
+        const resellerSession = await getResellerSession(req);
+        if (resellerSession) await db.collection(COLLECTIONS.resellerSessions).doc(resellerSession.token).delete().catch(() => {});
+    } catch (error) { console.error("AUTH LOGOUT ERROR:", error); }
+    res.setHeader("Set-Cookie", [
+        "gmc_admin_session=; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Path=/; HttpOnly; SameSite=Lax",
+        "gmc_reseller_session=; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Path=/; HttpOnly; SameSite=Lax"
+    ]);
+    res.json({ ok: true });
+});
+
 app.post("/api/logout", async (req, res) => {
     try {
         // Revoke the server-side session when possible.
@@ -810,7 +818,16 @@ app.put("/api/contacts", requireAdmin, async (req, res) => {
 
 /* Public runtime config — never expose payment credentials. */
 /* Purchase logs — admin only. Returns completed purchases with delivery details. */
-app.get("/api/purchase-logs", requireAdmin, async (req, res) => {
+app.get("/api/purchase-logs", async (req, res) => {
+    const adminSession = await getSession(req);
+    const resellerSession = !adminSession ? await getResellerSession(req) : null;
+    if (!adminSession && !resellerSession) return res.status(401).json({ message: "Please login first." });
+    let viewerResellerId = null;
+    if (resellerSession) {
+        const viewerReseller = await getDocument(COLLECTIONS.resellers, resellerSession.resellerId);
+        if (!viewerReseller || viewerReseller.active === false) return res.status(403).json({ message: "Reseller access is disabled." });
+        viewerResellerId = String(viewerReseller.id);
+    }
     try {
         const snapshot = await db.collection(COLLECTIONS.purchases).get();
         const logs = snapshot.docs
@@ -819,7 +836,9 @@ app.get("/api/purchase-logs", requireAdmin, async (req, res) => {
             // internal pre-Cashfree state and is intentionally hidden.
             .filter(p => {
                 const status = String(p.status || "").toLowerCase().trim();
-                return status && status !== "creating";
+                if (!status || status === "creating") return false;
+                if (viewerResellerId && String(p.resellerId || "") !== viewerResellerId) return false;
+                return true;
             })
             .sort((a, b) => {
                 const ta = a.paidAt?.toMillis?.() || a.createdAt?.toMillis?.() || Number(a.paidAt || a.createdAt || 0) || 0;
@@ -954,10 +973,20 @@ app.post("/api/reseller-logout", async (req, res) => {
     res.json({ ok: true });
 });
 
-/* Admin reseller management — only admins can create/change resellers. */
+/* Admin reseller management — creators own their resellers; Super Admin owns/controls everything. */
+function canManageReseller(session, reseller) {
+    if (!session || !reseller) return false;
+    if (session.role === "super") return true;
+    const owner = cleanEmail(reseller.createdByEmail || "");
+    return !!owner && owner === cleanEmail(session.email || "");
+}
+
 app.get("/api/resellers", requireAdmin, async (req, res) => {
     try {
-        const [resellers, products] = await Promise.all([loadCollection(COLLECTIONS.resellers), loadProducts()]);
+        const [allResellers, products] = await Promise.all([loadCollection(COLLECTIONS.resellers), loadProducts()]);
+        const isSuper = req.adminSession.role === "super";
+        const viewerEmail = cleanEmail(req.adminSession.email || "");
+        const resellers = allResellers.filter(r => isSuper || cleanEmail(r.createdByEmail || "") === viewerEmail);
         res.json({ resellers, products: products.map(p => ({ id: p.id, name: p.name })) });
     } catch (error) {
         console.error("RESELLER LIST ERROR:", error);
@@ -980,7 +1009,17 @@ app.post("/api/resellers", requireAdmin, async (req, res) => {
         const validIds = new Set(productSnap.docs.map(d => d.id));
         const cleanProductIds = productIds.filter(id => validIds.has(id));
         const ref = db.collection(COLLECTIONS.resellers).doc();
-        const reseller = { name, email, discountPercent: Math.round(discountPercent * 100) / 100, productIds: cleanProductIds, active: true, createdAt: new Date().toISOString() };
+        const now = new Date().toISOString();
+        const reseller = {
+            name,
+            email,
+            discountPercent: Math.round(discountPercent * 100) / 100,
+            productIds: cleanProductIds,
+            active: true,
+            createdAt: now,
+            createdByEmail: cleanEmail(req.adminSession.email || ""),
+            createdByRole: req.adminSession.role || "admin"
+        };
         await ref.set(reseller);
         res.status(201).json({ id: ref.id, ...reseller });
     } catch (error) {
@@ -995,6 +1034,7 @@ app.put("/api/resellers/:id", requireAdmin, async (req, res) => {
         const snap = await ref.get();
         if (!snap.exists) return res.status(404).json({ message: "Reseller not found." });
         const old = snap.data();
+        if (!canManageReseller(req.adminSession, old)) return res.status(403).json({ message: "You can only edit resellers created by you." });
         const name = String(req.body?.name ?? old.name ?? "").trim().slice(0, 120);
         const email = cleanEmail(req.body?.email ?? old.email);
         const discountPercent = Number(req.body?.discountPercent ?? old.discountPercent ?? 0);
@@ -1007,7 +1047,16 @@ app.put("/api/resellers/:id", requireAdmin, async (req, res) => {
         const productSnap = await db.collection(COLLECTIONS.products).get();
         const validIds = new Set(productSnap.docs.map(d => d.id));
         const cleanProductIds = productIds.filter(id => validIds.has(id));
-        const updated = { ...old, name, email, discountPercent: Math.round(discountPercent * 100) / 100, productIds: cleanProductIds, active: req.body?.active === false ? false : true };
+        const updated = {
+            ...old,
+            name,
+            email,
+            discountPercent: Math.round(discountPercent * 100) / 100,
+            productIds: cleanProductIds,
+            active: req.body?.active === false ? false : true,
+            createdByEmail: cleanEmail(old.createdByEmail || ""),
+            createdByRole: old.createdByRole || "admin"
+        };
         await ref.set(updated);
         res.json({ id: ref.id, ...updated });
     } catch (error) {
@@ -1018,7 +1067,11 @@ app.put("/api/resellers/:id", requireAdmin, async (req, res) => {
 
 app.delete("/api/resellers/:id", requireAdmin, async (req, res) => {
     try {
-        await db.collection(COLLECTIONS.resellers).doc(req.params.id).delete();
+        const ref = db.collection(COLLECTIONS.resellers).doc(req.params.id);
+        const snap = await ref.get();
+        if (!snap.exists) return res.status(404).json({ message: "Reseller not found." });
+        if (!canManageReseller(req.adminSession, snap.data())) return res.status(403).json({ message: "You can only remove resellers created by you." });
+        await ref.delete();
         const sessions = await db.collection(COLLECTIONS.resellerSessions).where("resellerId", "==", req.params.id).get();
         const batch = db.batch(); sessions.docs.forEach(d => batch.delete(d.ref)); if (!sessions.empty) await batch.commit();
         res.json({ ok: true });

@@ -81,7 +81,7 @@ nav{height:78px;padding:0 7%;display:flex;align-items:center;justify-content:spa
 
 <section class="contact-manager reseller-manager">
 <div class="top" style="margin-bottom:18px">
-<div><div class="eyebrow">RESELLER MANAGEMENT</div><h1>RESELLER MANAGER</h1><p>Add resellers, set their discount and choose which products they can purchase.</p></div>
+<div><div class="eyebrow">RESELLER MANAGEMENT</div><h1>RESELLER MANAGER</h1><p id="resellerManagerDesc">Add resellers, set their discount and choose which products they can purchase.</p></div>
 <button class="primary" onclick="openResellerEditor()">+ ADD RESELLER</button>
 </div>
 <div id="resellerList" class="admin-list"></div>
@@ -251,6 +251,9 @@ async function init(){
             $("adminManager").classList.remove("hidden");
             await loadAdmins();
         }
+        $("resellerManagerDesc").textContent = status.role === "super"
+            ? "View every reseller, see which admin created each one, and edit or remove any reseller."
+            : "Create resellers and manage only the resellers created by your admin account.";
         await load();
         await loadContacts();
         await loadResellers();
@@ -298,7 +301,9 @@ function renderResellers(){
     box.innerHTML=resellers.map(r=>{
         const names=(Array.isArray(r.productIds)?r.productIds:[]).map(id=>pmap.get(String(id))).filter(Boolean);
         const status=r.active===false?'DISABLED':'ACTIVE';
-        return `<div class="admin-row"><div><div class="role">${esc(status)} · ${Number(r.discountPercent||0)}% OFF</div><div class="email">${esc(r.name||'Reseller')}</div><div style="font-size:9px;color:#777;margin-top:4px">${esc(r.email||'')}</div><div style="font-size:8px;color:#555;margin-top:6px">${names.length?esc(names.join(' • ')):'NO PRODUCTS ASSIGNED'}</div></div><div style="display:flex;flex-direction:column;gap:6px"><button onclick="openResellerEditor('${esc(r.id)}')">EDIT</button><button onclick="removeReseller('${esc(r.id)}')">REMOVE</button></div></div>`;
+        const creator = r.createdByEmail || "Legacy / unknown";
+        const creatorRole = r.createdByRole === "super" ? "SUPER ADMIN" : "ADMIN";
+        return `<div class="admin-row"><div><div class="role">${esc(status)} · ${Number(r.discountPercent||0)}% OFF</div><div class="email">${esc(r.name||'Reseller')}</div><div style="font-size:9px;color:#777;margin-top:4px">${esc(r.email||'')}</div><div style="font-size:8px;color:#555;margin-top:6px">${names.length?esc(names.join(' • ')):'NO PRODUCTS ASSIGNED'}</div><div style="font-size:8px;color:#888;margin-top:7px">CREATED BY: <span style="color:#bbb">${esc(creator)}</span> <span style="color:#555">(${esc(creatorRole)})</span></div></div><div style="display:flex;flex-direction:column;gap:6px"><button onclick="openResellerEditor('${esc(r.id)}')">EDIT</button><button onclick="removeReseller('${esc(r.id)}')">REMOVE</button></div></div>`;
     }).join("");
 }
 function renderResellerProductPicker(selected=[]){
