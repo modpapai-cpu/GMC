@@ -1459,8 +1459,21 @@ app.post("/api/payment/qr", async (req, res) => {
         const plans = Array.isArray(product.plans) ? product.plans : [];
         const selectedPlan = plans[planIndex];
         if (!selectedPlan) return res.status(400).json({ message: "Selected package is not available." });
-        const amountPaise = parsePlanAmount(selectedPlan.price);
-        if (!amountPaise) return res.status(400).json({ message: "This package does not have a valid numeric price." });
+        const originalAmountPaise = parsePlanAmount(selectedPlan.price);
+        if (!originalAmountPaise) return res.status(400).json({ message: "This package does not have a valid numeric price." });
+
+        // Apply the logged-in reseller's server-side discount. Never trust the price sent by the browser.
+        const resellerSession = await getResellerSession(req);
+        let reseller = null;
+        if (resellerSession) {
+            reseller = await getDocument(COLLECTIONS.resellers, resellerSession.resellerId);
+            if (!reseller || reseller.active === false) return res.status(403).json({ message: "Reseller access is disabled." });
+            if (!resellerCanBuyProduct(reseller, productId)) return res.status(403).json({ message: "This product is not assigned to your reseller account." });
+        }
+        const resellerDiscountPercent = reseller ? Math.max(0, Math.min(100, Number(reseller.discountPercent || 0))) : 0;
+        const amountPaise = reseller ? resellerDiscountedAmountPaise(originalAmountPaise, resellerDiscountPercent) : originalAmountPaise;
+        if (!amountPaise) return res.status(400).json({ message: "The calculated payment amount is invalid." });
+
         const purchaseRef = db.collection(COLLECTIONS.purchases).doc();
         const purchaseId = purchaseRef.id;
         let reservedLicenseKey = "", reservedAccount = null, credentialMode = "license";
