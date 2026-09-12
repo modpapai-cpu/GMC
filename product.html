@@ -957,6 +957,17 @@
 }
 
     
+.cashfree-inline-container {
+    width:100%; min-height:520px; margin:14px 0 16px; border-radius:14px; overflow:hidden;
+    background:#fff; border:1px solid #222; display:none;
+}
+.cashfree-inline-container.active { display:block; }
+.cashfree-inline-container iframe { width:100% !important; min-height:520px !important; border:0 !important; display:block; }
+@media(max-width:600px){
+    .cashfree-inline-container { min-height:610px; margin-left:-2px; margin-right:-2px; width:calc(100% + 4px); }
+    .cashfree-inline-container iframe { min-height:610px !important; }
+}
+
 .buy-test { margin-top:10px; width:100%; padding:12px 16px; border:1px dashed #ff4444; border-radius:10px; background:#170505; color:#ff5555; font-weight:900; cursor:pointer; }
 .buy-test:hover { background:#220707; }
 .buy-test[hidden] { display:none !important; }
@@ -1097,7 +1108,8 @@
                     <div class="buy-summary-row"><span>Email</span><strong id="buyQrEmail">—</strong></div>
                 </div>
                 <div class="buy-amount" id="buyQrAmount">₹0</div>
-                <div class="buy-status" id="buyQrStatus">Preparing Cashfree Checkout...</div>
+                <div class="buy-status" id="buyQrStatus">Preparing secure checkout...</div>
+                <div id="cashfreeCheckoutContainer" class="cashfree-inline-container" aria-label="Cashfree secure payment"></div>
                 <div class="buy-qr-wrap" id="buyQrWrap" style="display:none">
                     <div class="qr-card">
                         <div class="qr-crop">
@@ -1271,6 +1283,7 @@
     const qrPackageName = document.getElementById("qrPackageName");
     const qrPackagePrice = document.getElementById("qrPackagePrice");
     const buyQrStatus = document.getElementById("buyQrStatus");
+    const cashfreeCheckoutContainer = document.getElementById("cashfreeCheckoutContainer");
     const buyQrImage = document.getElementById("buyQrImage");
     const buyQrLink = document.getElementById("buyQrLink");
     const buySuccess = document.getElementById("buySuccess");
@@ -1477,18 +1490,26 @@
             buyQrPackage.textContent = data.planLabel || selectedPlan.label || "—";
             buyQrEmail.textContent = data.customerEmail || buyCustomer.email || "—";
             buyQrAmount.textContent = `₹${Number(data.amount).toLocaleString("en-IN")}`;
-            buyQrStatus.textContent = "Opening secure Cashfree checkout...";
+            buyQrStatus.textContent = "Loading secure payment...";
             buySuccess.hidden = true;
             buyQrWrap.style.display = "none";
             buyQrLink.hidden = true;
+            if (cashfreeCheckoutContainer) {
+                cashfreeCheckoutContainer.innerHTML = "";
+                cashfreeCheckoutContainer.classList.add("active");
+            }
             showBuyStep(3);
             const cashfree = Cashfree({ mode: data.cashfreeMode || window.gmcCashfreeMode || "production" });
-            const result = await cashfree.checkout({ paymentSessionId: data.paymentSessionId, redirectTarget: "_modal" });
+            const result = await cashfree.checkout({
+                paymentSessionId: data.paymentSessionId,
+                redirectTarget: cashfreeCheckoutContainer
+            });
             if (result?.error) {
+                if (cashfreeCheckoutContainer) cashfreeCheckoutContainer.classList.remove("active");
                 buyQrStatus.textContent = result.error.message || "Cashfree checkout could not be opened.";
                 return;
             }
-            buyQrStatus.textContent = "Complete the payment in the Cashfree window. We are checking the payment status automatically.";
+            buyQrStatus.textContent = "Complete your payment below. Payment status will be verified automatically.";
             startBuyPolling();
         } catch (error) {
             console.error("CASHFREE PAYMENT ERROR:", error);
@@ -1544,6 +1565,10 @@
             buyQrStatus.textContent = "TEST PAYMENT VERIFIED — NO REAL MONEY CHARGED.";
             buyQrWrap.style.display = "none";
             buyQrLink.hidden = true;
+            if (cashfreeCheckoutContainer) {
+                cashfreeCheckoutContainer.classList.remove("active");
+                cashfreeCheckoutContainer.innerHTML = "";
+            }
             const deliveryStatus = document.getElementById("buyEmailDeliveryStatus");
             if (deliveryStatus) deliveryStatus.textContent = data.emailStatus === "sent"
                 ? `Test order email sent successfully to ${buyCustomer.email}.`
@@ -1587,6 +1612,7 @@
                         : `Payment received. Your order email is being processed for ${buyCustomer.email}.`;
                 }
                 buySuccess.hidden = false;
+                if (cashfreeCheckoutContainer) cashfreeCheckoutContainer.classList.remove("active");
                 buyQrWrap.style.display = "none";
                 buyQrLink.hidden = true;
                 buyCloseAfter.textContent = "CLOSE";
@@ -1596,6 +1622,7 @@
             if (data.status === "expired") {
                 stopBuyPolling();
                 buyQrStatus.textContent = "This payment session has expired. Close and start a new payment.";
+                if (cashfreeCheckoutContainer) cashfreeCheckoutContainer.classList.remove("active");
                 buyQrWrap.style.display = "none";
                 buyQrLink.hidden = true;
                 return;
