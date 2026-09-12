@@ -321,6 +321,7 @@ function escapeEmailHtml(value) {
 function buildPurchaseEmail(purchase) {
     const customerName = String(purchase.customerName || "Customer").trim() || "Customer";
     const productName = String(purchase.productName || "GMC Product").trim();
+    const brandName = productName || "GMC Product";
     const planLabel = String(purchase.planLabel || "Package").trim();
     const amount = Number(purchase.amountPaise || 0) / 100;
     const mode = ["license", "userpass", "off"].includes(purchase.credentialMode)
@@ -356,7 +357,7 @@ function buildPurchaseEmail(purchase) {
     }
 
     const downloadHtml = downloadUrl
-        ? `<a href="${escapeEmailHtml(downloadUrl)}" style="display:inline-block;background:#ff1111;color:#fff;text-decoration:none;font-weight:800;font-size:14px;padding:14px 24px;border-radius:10px;">DOWNLOAD GMC TOOL</a>`
+        ? `<a href="${escapeEmailHtml(downloadUrl)}" style="display:inline-block;background:#ff1111;color:#fff;text-decoration:none;font-weight:800;font-size:14px;padding:14px 24px;border-radius:10px;">DOWNLOAD ${escapeEmailHtml(brandName)}</a>`
         : `<div style="padding:14px 16px;border-radius:10px;background:#171717;color:#aaa;font-size:13px;">Your download link will be provided separately.</div>`;
     const downloadText = downloadUrl ? `DOWNLOAD: ${downloadUrl}` : "DOWNLOAD: Link will be provided separately.";
 
@@ -366,12 +367,12 @@ function buildPurchaseEmail(purchase) {
 <tr><td align="center">
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:620px;background:#fff;border-radius:18px;overflow:hidden;">
 <tr><td style="background:#0b0b0b;padding:28px 30px;text-align:center;border-bottom:3px solid #ff1111;">
-<div style="font-size:27px;font-weight:900;letter-spacing:1px;color:#fff;">GMC <span style="color:#ff1111;">STEAM TOOL</span></div>
+<div style="font-size:27px;font-weight:900;letter-spacing:1px;color:#fff;">${escapeEmailHtml(brandName)}</div>
 <div style="margin-top:8px;color:#aaa;font-size:12px;letter-spacing:1.5px;">ORDER CONFIRMATION</div>
 </td></tr>
 <tr><td style="padding:32px 30px;">
 <div style="font-size:22px;font-weight:800;color:#111;">Payment successful ✓</div>
-<p style="font-size:15px;line-height:1.7;color:#555;margin:10px 0 22px;">Hi <strong>${escapeEmailHtml(customerName)}</strong>, thank you for your purchase. Your GMC order has been confirmed and your access details are below.</p>
+<p style="font-size:15px;line-height:1.7;color:#555;margin:10px 0 22px;">Hi <strong>${escapeEmailHtml(customerName)}</strong>, thank you for your purchase. Your <strong>${escapeEmailHtml(brandName)}</strong> order has been confirmed and your access details are below.</p>
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;border-spacing:0;background:#f7f7f7;border-radius:12px;margin-bottom:20px;">
 <tr><td style="padding:12px 15px;color:#888;font-size:12px;">PRODUCT</td><td align="right" style="padding:12px 15px;color:#111;font-weight:800;font-size:13px;">${escapeEmailHtml(productName)}</td></tr>
 <tr><td style="padding:12px 15px;color:#888;font-size:12px;">PACKAGE</td><td align="right" style="padding:12px 15px;color:#111;font-weight:800;font-size:13px;">${escapeEmailHtml(planLabel)}</td></tr>
@@ -383,11 +384,11 @@ ${downloadHtml}
 </div>
 <p style="font-size:12px;line-height:1.6;color:#999;margin:25px 0 0;text-align:center;">Please keep your license/login details private. If you have any issue with your order, reply to this email for support.</p>
 </td></tr>
-<tr><td style="background:#0b0b0b;padding:20px 30px;text-align:center;color:#777;font-size:11px;">© GMC Steam Tool · Automated purchase delivery</td></tr>
+<tr><td style="background:#0b0b0b;padding:20px 30px;text-align:center;color:#777;font-size:11px;">© ${escapeEmailHtml(brandName)} · Automated purchase delivery</td></tr>
 </table></td></tr></table>
 </body></html>`;
 
-    const textPart = `GMC STEAM TOOL\n\nPayment successful ✓\n\nHi ${customerName}, thank you for your purchase.\n\nPRODUCT: ${productName}\nPACKAGE: ${planLabel}\nAMOUNT: ₹${amount.toLocaleString("en-IN")}\n${credentialText}\n${downloadText}\n\nPlease keep your access details private.`;
+    const textPart = `${brandName}\n\nPayment successful ✓\n\nHi ${customerName}, thank you for your purchase.\n\nPRODUCT: ${productName}\nPACKAGE: ${planLabel}\nAMOUNT: ₹${amount.toLocaleString("en-IN")}\n${credentialText}\n${downloadText}\n\nPlease keep your access details private.`;
     return { htmlPart, textPart };
 }
 
