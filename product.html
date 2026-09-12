@@ -975,19 +975,19 @@
 
     
 .cashfree-inline-container {
-    width:425px; max-width:100%; min-height:760px; height:760px; margin:8px auto 4px;
+    width:425px; max-width:100%; min-height:900px; height:900px; margin:8px auto 4px;
     border-radius:14px; overflow:hidden; overflow-y:hidden; overflow-x:hidden; background:#fff; border:1px solid #222; display:none;
     -webkit-overflow-scrolling:touch; box-sizing:border-box;
 }
 .cashfree-inline-container.active { display:block; }
-.cashfree-inline-container iframe { width:100% !important; max-width:100% !important; min-width:0 !important; height:760px !important; min-height:760px !important; border:0 !important; display:block; margin:0 auto; box-sizing:border-box; }
+.cashfree-inline-container iframe { width:100% !important; max-width:100% !important; min-width:0 !important; height:900px !important; min-height:900px !important; border:0 !important; display:block; margin:0 auto; box-sizing:border-box; }
 @media(max-width:700px){
     .buy-modal{padding:6px}
     .buy-modal-box.payment-active{width:calc(100vw - 12px);max-width:470px;max-height:92vh;height:auto;overflow-y:auto;overflow-x:hidden;border-radius:12px}
     .buy-modal-box.payment-active .buy-modal-head{padding:15px 16px 5px}
     .buy-modal-box.payment-active .buy-step{padding:6px 8px 12px}
-    .cashfree-inline-container { width:100%; max-width:none; min-height:760px; height:760px; margin:8px 0 4px; border-radius:10px; }
-    .cashfree-inline-container iframe { width:100% !important; max-width:100% !important; min-width:0 !important; height:760px !important; min-height:760px !important; }
+    .cashfree-inline-container { width:100%; max-width:none; min-height:900px; height:900px; margin:8px 0 4px; border-radius:10px; }
+    .cashfree-inline-container iframe { width:100% !important; max-width:100% !important; min-width:0 !important; height:900px !important; min-height:900px !important; }
 }
 
 .buy-test { margin-top:10px; width:100%; padding:12px 16px; border:1px dashed #ff4444; border-radius:10px; background:#170505; color:#ff5555; font-weight:900; cursor:pointer; }
@@ -1529,7 +1529,7 @@
                 redirectTarget: cashfreeCheckoutContainer,
                 appearance: {
                     width: `${Math.min(425, Math.max(300, window.innerWidth - 32))}px`,
-                    height: "760px"
+                    height: "900px"
                 }
             });
             if (result?.error) {
