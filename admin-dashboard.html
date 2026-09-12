@@ -185,10 +185,6 @@ const $=id=>document.getElementById(id);
 
 async function api(url, options={}){
     const r=await fetch(url,{...options,headers:{"Content-Type":"application/json",...(options.headers||{})}});
-    const refreshedExpiry = Number(r.headers.get("X-Session-Expires-At") || 0);
-    if(refreshedExpiry){
-        sessionExpiresAt = refreshedExpiry;
-    }
     const data=await r.json().catch(()=>({message:"Server error"}));
     if(!r.ok) throw new Error(data.message||"Request failed");
     return data;
@@ -196,32 +192,6 @@ async function api(url, options={}){
 
 let sessionExpiresAt = 0;
 let sessionTimer = null;
-let lastUserActivity = Date.now();
-let lastHeartbeat = 0;
-const HEARTBEAT_INTERVAL = 60 * 1000;
-const ACTIVITY_WINDOW = 5 * 60 * 1000;
-
-function markUserActivity(){
-    lastUserActivity = Date.now();
-}
-["click","keydown","mousemove","mousedown","scroll","touchstart"].forEach(eventName => {
-    document.addEventListener(eventName, markUserActivity, {passive:true});
-});
-
-async function refreshActiveSession(){
-    const now = Date.now();
-    if(now - lastUserActivity > ACTIVITY_WINDOW || now - lastHeartbeat < HEARTBEAT_INTERVAL) return;
-    lastHeartbeat = now;
-    try{
-        const status = await api("/api/admin-status");
-        if(!status.authenticated){
-            if(sessionTimer) clearInterval(sessionTimer);
-            location.replace("first.html");
-            return;
-        }
-        sessionExpiresAt = Number(status.expiresAt || sessionExpiresAt);
-    }catch(e){}
-}
 
 function startSessionTimer(expiresAt){
     sessionExpiresAt = Number(expiresAt || 0);
@@ -232,21 +202,18 @@ function startSessionTimer(expiresAt){
             clearInterval(sessionTimer);
             sessionTimer = null;
             fetch("/api/logout", {method:"POST"}).catch(()=>{});
-            location.replace("first.html");
+            location.replace("admin.html");
         }
     };
 
     check();
-    sessionTimer = setInterval(() => {
-        check();
-        refreshActiveSession();
-    }, 1000);
+    sessionTimer = setInterval(check, 1000);
 }
 
 async function init(){
     try{
         const status=await api("/api/admin-status");
-        if(!status.authenticated){ location.replace("first.html"); return; }
+        if(!status.authenticated){ location.replace("admin.html"); return; }
         startSessionTimer(status.expiresAt);
         window.currentAdmin = status;
         $("managerEyebrow").textContent = status.role === "super" ? "SUPER ADMIN" : "ADMIN";
@@ -260,7 +227,7 @@ async function init(){
         }
         await load();
         await loadContacts();
-    }catch(e){ location.replace("first.html"); }
+    }catch(e){ location.replace("admin.html"); }
 }
 
 async function loadAdmins(){
@@ -593,13 +560,11 @@ init();
 // Re-check the server session when the tab becomes active again.
 document.addEventListener("visibilitychange", async () => {
     if(document.visibilityState !== "visible") return;
-    markUserActivity();
-    lastHeartbeat = 0;
     try{
         const status = await api("/api/admin-status");
-        if(!status.authenticated){ location.replace("first.html"); return; }
+        if(!status.authenticated){ location.replace("admin.html"); return; }
         startSessionTimer(status.expiresAt);
-    }catch(e){ location.replace("first.html"); }
+    }catch(e){ location.replace("admin.html"); }
 });
 </script>
 <div style="text-align:center;padding:24px 18px 28px;border-top:1px solid rgba(255,0,0,.13);color:#555;font-size:10px;line-height:2"><div>© 2026 <span style="color:#ff2525">GMC</span>. All Rights Reserved.</div><div style="display:flex;justify-content:center;align-items:center;gap:10px 28px;flex-wrap:wrap;margin-top:10px"><a href="privacy-policy.html" style="color:#777;text-decoration:none">Privacy Policy</a><a href="terms-conditions.html" style="color:#777;text-decoration:none">Terms &amp; Conditions</a><a href="refund-cancellation.html" style="color:#777;text-decoration:none">Refund &amp; Cancellation</a><a href="shipping-delivery.html" style="color:#777;text-decoration:none">Shipping &amp; Delivery</a></div></div>

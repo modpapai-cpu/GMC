@@ -5,7 +5,6 @@ const fs = require("fs");
 const path = require("path");
 
 const app = express();
-// Render terminates TLS at the proxy. Trust the proxy and use an explicit public HTTPS origin for Cashfree.
 app.set("trust proxy", 1);
 const PORT = process.env.PORT || 3000;
 const ADMIN_EMAIL = "modpapai@gmail.com";
@@ -211,15 +210,16 @@ const CASHFREE_CLIENT_ID = process.env.CASHFREE_CLIENT_ID || process.env.CASHFRE
 const CASHFREE_CLIENT_SECRET = process.env.CASHFREE_CLIENT_SECRET || process.env.CASHFREE_SECRET_KEY || "";
 const CASHFREE_ENV = String(process.env.CASHFREE_ENV || "PRODUCTION").toUpperCase() === "SANDBOX" ? "SANDBOX" : "PRODUCTION";
 const CASHFREE_API_VERSION = "2025-01-01";
-const CASHFREE_ORDER_TTL_SECONDS = Math.max(16 * 60, Math.min(Number(process.env.CASHFREE_ORDER_TTL_SECONDS || 1800), 29 * 24 * 60 * 60));
-const PUBLIC_BASE_URL = String(process.env.PUBLIC_BASE_URL || "https://gmc-xduf.onrender.com").trim().replace(/\/$/, "");
+const CASHFREE_ORDER_TTL_SECONDS = Math.max(16 * 60, Math.min(30 * 24 * 60 * 60 - 60, Number(process.env.CASHFREE_ORDER_TTL_SECONDS || 1800)));
 
-function getPublicBaseUrl(req) {
-    // Cashfree requires HTTPS return_url/notify_url. PUBLIC_BASE_URL is preferred;
-    // otherwise derive the host while forcing HTTPS (required behind Render proxy).
-    if (/^https:\/\//i.test(PUBLIC_BASE_URL)) return PUBLIC_BASE_URL;
-    const host = req.get("x-forwarded-host") || req.get("host");
-    return `https://${host}`.replace(/\/$/, "");
+function parsePlanAmount(value) {
+    const raw = String(value ?? "").trim();
+    const cleaned = raw.replace(/[^0-9.]/g, "");
+    if (!cleaned) return null;
+    const rupees = Number(cleaned);
+    if (!Number.isFinite(rupees) || rupees <= 0) return null;
+    const paise = Math.round(rupees * 100);
+    return paise > 0 ? paise : null;
 }
 
 function cashfreeBaseUrl() {
@@ -256,25 +256,6 @@ function normalizePhone(value) {
     const digits = String(value || "").replace(/\D/g, "");
     if (digits.length === 12 && digits.startsWith("91")) return digits.slice(2);
     return digits;
-}
-
-/* Convert a plan price such as "₹600", "600", or "600.00" to integer paise. */
-function parsePlanAmount(value) {
-    if (typeof value === "number" && Number.isFinite(value)) {
-        const paise = Math.round(value * 100);
-        return paise > 0 ? paise : 0;
-    }
-
-    const raw = String(value ?? "").trim();
-    if (!raw) return 0;
-
-    // Keep digits and the decimal separator; strip currency symbols/labels.
-    const normalized = raw.replace(/,/g, "").match(/\d+(?:\.\d{1,2})?/);
-    if (!normalized) return 0;
-
-    const rupees = Number(normalized[0]);
-    if (!Number.isFinite(rupees) || rupees <= 0) return 0;
-    return Math.round(rupees * 100);
 }
 
 async function releaseReservedInventory(purchase) {
@@ -665,7 +646,7 @@ function parseCookies(req) {
     return result;
 }
 
-async function getSession(req, res, touch = true) {
+async function getSession(req) {
     const token = parseCookies(req).gmc_admin_session;
     if (!token) return null;
 
@@ -678,27 +659,12 @@ async function getSession(req, res, touch = true) {
         return null;
     }
 
-    // Sliding inactivity timeout: every authenticated request/activity heartbeat
-    // keeps the session alive for another 15 minutes. No request for 15 minutes
-    // means the session expires and the admin must log in again.
-    if (touch) {
-        const expiresAt = Date.now() + SESSION_TTL;
-        await snapshot.ref.update({ expiresAt, lastActivityAt: adminSdk.firestore.FieldValue.serverTimestamp() });
-        const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
-        res?.setHeader(
-            "Set-Cookie",
-            `gmc_admin_session=${token}; Max-Age=900; Path=/; HttpOnly; SameSite=Lax${secure}`
-        );
-        res?.setHeader("X-Session-Expires-At", String(expiresAt));
-        return { token, ...data, expiresAt };
-    }
-
     return { token, ...data };
 }
 
 async function requireAdmin(req, res, next) {
     try {
-        const session = await getSession(req, res);
+        const session = await getSession(req);
         if (!session) return res.status(401).json({ message: "Admin session expired. Please login again." });
         req.adminSession = session;
         next();
@@ -710,7 +676,7 @@ async function requireAdmin(req, res, next) {
 
 async function requireSuperAdmin(req, res, next) {
     try {
-        const session = await getSession(req, res);
+        const session = await getSession(req);
         if (!session) return res.status(401).json({ message: "Admin session expired. Please login again." });
         if (session.role !== "super") return res.status(403).json({ message: "Super Admin access required." });
         req.adminSession = session;
@@ -729,7 +695,7 @@ async function clearSession(res, req) {
 
 app.get("/api/admin-status", async (req, res) => {
     try {
-        const session = await getSession(req, res);
+        const session = await getSession(req);
         res.json({
             authenticated: !!session,
             expiresAt: session ? session.expiresAt : 0,
@@ -1134,7 +1100,7 @@ app.post("/api/payment/qr", async (req, res) => {
         const cashfreeOrderId = `gmc_${purchaseId}`.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 45);
         await purchaseRef.set({ productId, productName: String(product.name || ""), planIndex, planLabel: String(selectedPlan.label || `Package ${planIndex + 1}`), amountPaise, customerName, customerEmail, customerPhone, reservedLicenseKey, reservedAccount, credentialMode, downloadUrl: String(product.downloadUrl || "").trim(), status: "creating", createdAt: adminSdk.firestore.FieldValue.serverTimestamp(), expiresAt, cashfreeOrderId });
         try {
-            const origin = getPublicBaseUrl(req);
+            const origin = String(process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get("host")}`).replace(/\/$/, "");
             const order = await cashfreeRequest("/orders", { method: "POST", headers: { "x-request-id": purchaseId, "x-idempotency-key": crypto.randomUUID() }, body: JSON.stringify({ order_id: cashfreeOrderId, order_amount: amountPaise / 100, order_currency: "INR", customer_details: { customer_id: `gmc_${purchaseId}`, customer_name: customerName, customer_email: customerEmail, customer_phone: customerPhone }, order_meta: { return_url: `${origin}/product.html?cashfree_order_id=${encodeURIComponent(cashfreeOrderId)}`, notify_url: `${origin}/api/webhooks/cashfree` }, order_expiry_time: new Date(expiresAt).toISOString(), order_note: `${String(product.name || "GMC").slice(0, 80)} - ${String(selectedPlan.label || "Package").slice(0, 80)}`, order_tags: { purchase_id: purchaseId, product_id: productId } }) });
             const sessionId = String(order.payment_session_id || "").trim();
             if (!sessionId) throw new Error("Cashfree did not return a payment session.");
