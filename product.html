@@ -900,7 +900,13 @@
     width:min(520px,100%); max-height:92vh; overflow:auto; background:#0b0b0b;
     border:1px solid rgba(255,0,0,.65); border-radius:18px; box-shadow:0 20px 80px rgba(0,0,0,.8),0 0 40px rgba(255,0,0,.10);
     transition:width .18s ease, max-height .18s ease;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 45, 45, .9) rgba(255,255,255,.045);
 }
+.buy-modal-box::-webkit-scrollbar { width: 9px; }
+.buy-modal-box::-webkit-scrollbar-track { background: rgba(255,255,255,.035); border-radius: 999px; margin: 10px 0; }
+.buy-modal-box::-webkit-scrollbar-thumb { background: linear-gradient(180deg, #ff2a2a, #a90000); border: 2px solid #0b0b0b; border-radius: 999px; min-height: 42px; }
+.buy-modal-box::-webkit-scrollbar-thumb:hover { background: linear-gradient(180deg, #ff4a4a, #d00000); }
 .buy-modal-box.payment-active {
     width:min(470px,calc(100vw - 16px));
     max-height:96vh;
@@ -1138,7 +1144,6 @@
                         </div>
                     </div>
                 </div>
-                <a class="buy-qr-link" id="buyQrLink" href="#" target="_blank" rel="noopener noreferrer" hidden>OPEN PAYMENT</a>
                 <div class="buy-success" id="buySuccess" hidden>PAYMENT RECEIVED ✓<br><span id="buyEmailDeliveryStatus" style="display:block;margin-top:8px;font-size:12px;font-weight:600;color:#aaa;">Your order details and download link are being sent to your email.</span></div>
                 <div class="buy-error" id="buyError3"></div>
                 <button class="buy-secondary" id="buyCloseAfter" type="button">CLOSE</button>
@@ -1297,7 +1302,6 @@
     const buyQrStatus = document.getElementById("buyQrStatus");
     const cashfreeCheckoutContainer = document.getElementById("cashfreeCheckoutContainer");
     const buyQrImage = document.getElementById("buyQrImage");
-    const buyQrLink = document.getElementById("buyQrLink");
     const buySuccess = document.getElementById("buySuccess");
     const buyQrWrap = document.getElementById("buyQrWrap");
 
@@ -1340,8 +1344,6 @@
         qrPackagePrice.textContent = "₹0";
         buyQrStatus.textContent = "";
         buyQrImage.removeAttribute("src");
-        buyQrLink.hidden = true;
-        buyQrLink.href = "#";
         buySuccess.hidden = true;
         buyQrWrap.style.display = "flex";
         const buyBox = buyModal.querySelector('.buy-modal-box');
@@ -1512,7 +1514,6 @@
             buyQrStatus.textContent = "Loading secure payment...";
             buySuccess.hidden = true;
             buyQrWrap.style.display = "none";
-            buyQrLink.hidden = true;
             if (cashfreeCheckoutContainer) {
                 cashfreeCheckoutContainer.innerHTML = "";
                 cashfreeCheckoutContainer.classList.add("active");
@@ -1587,7 +1588,6 @@
             buyQrAmount.textContent = `₹${Number(data.amount || 0).toLocaleString("en-IN")}`;
             buyQrStatus.textContent = "TEST PAYMENT VERIFIED — NO REAL MONEY CHARGED.";
             buyQrWrap.style.display = "none";
-            buyQrLink.hidden = true;
             if (cashfreeCheckoutContainer) {
                 cashfreeCheckoutContainer.classList.remove("active");
                 cashfreeCheckoutContainer.innerHTML = "";
@@ -1637,8 +1637,7 @@
                 buySuccess.hidden = false;
                 if (cashfreeCheckoutContainer) cashfreeCheckoutContainer.classList.remove("active");
                 buyQrWrap.style.display = "none";
-                buyQrLink.hidden = true;
-                buyCloseAfter.textContent = "CLOSE";
+                    buyCloseAfter.textContent = "CLOSE";
                 return;
             }
 
@@ -1647,8 +1646,7 @@
                 buyQrStatus.textContent = "This payment session has expired. Close and start a new payment.";
                 if (cashfreeCheckoutContainer) cashfreeCheckoutContainer.classList.remove("active");
                 buyQrWrap.style.display = "none";
-                buyQrLink.hidden = true;
-                return;
+                    return;
             }
 
             buyQrStatus.textContent = "Waiting for Cashfree payment...";
