@@ -287,7 +287,7 @@ async function markCashfreePurchasePaid(purchaseId, paymentId, source = "cashfre
         const snap = await tx.get(ref);
         if (!snap.exists) throw new Error("Purchase not found.");
         const purchase = snap.data();
-        if (purchase.status === "paid") return;
+        if (purchase.status === "paid" || purchase.status === "refund") return;
         const mode = ["license", "userpass", "off"].includes(purchase.credentialMode) ? purchase.credentialMode : "license";
         tx.update(ref, {
             status: "paid",
@@ -812,7 +812,7 @@ app.get("/api/purchase-logs", requireAdmin, async (req, res) => {
         const snapshot = await db.collection(COLLECTIONS.purchases).get();
         const logs = snapshot.docs
             .map(doc => ({ id: doc.id, ...doc.data() }))
-            .filter(p => String(p.status || "").toLowerCase() === "paid")
+            .filter(p => ["paid", "refund"].includes(String(p.status || "").toLowerCase()))
             .sort((a, b) => {
                 const ta = a.paidAt?.toMillis?.() || a.createdAt?.toMillis?.() || Number(a.paidAt || a.createdAt || 0) || 0;
                 const tb = b.paidAt?.toMillis?.() || b.createdAt?.toMillis?.() || Number(b.paidAt || b.createdAt || 0) || 0;
@@ -826,6 +826,7 @@ app.get("/api/purchase-logs", requireAdmin, async (req, res) => {
                     id: p.id,
                     customerName: String(p.customerName || "").trim(),
                     email: String(p.customerEmail || "").trim(),
+                    phone: String(p.customerPhone || p.phone || "").trim(),
                     username: p.credentialMode === "userpass" ? String(account.username || "").trim() : "",
                     password: p.credentialMode === "userpass" ? String(account.password || "") : "",
                     license: p.credentialMode === "license" ? String(p.licenseKey || "").trim() : "",
@@ -833,6 +834,10 @@ app.get("/api/purchase-logs", requireAdmin, async (req, res) => {
                     planDetails: planLabel + (amount ? ` — ₹${amount.toLocaleString("en-IN")}` : ""),
                     purchaseDate: p.paidAt?.toDate?.()?.toISOString?.() || p.createdAt?.toDate?.()?.toISOString?.() || null,
                     paymentId: String(p.paymentId || "").trim(),
+                    status: String(p.status || "").toLowerCase() === "refund" ? "refund" : "paid",
+                    refundAmount: Number(p.refundAmountPaise || 0) / 100,
+                    refundId: String(p.refundId || p.cashfreeRefundId || "").trim(),
+                    refundedAt: p.refundedAt?.toDate?.()?.toISOString?.() || p.refundUpdatedAt?.toDate?.()?.toISOString?.() || null,
                     testPayment: Boolean(p.testPayment)
                 };
             });
@@ -1003,7 +1008,34 @@ app.post("/api/webhooks/cashfree", async (req, res) => {
         const expBuf = Buffer.from(expected, "utf8");
         if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) return res.status(401).send("Invalid signature.");
         const payload = JSON.parse(rawBody);
-        if (payload?.type !== "PAYMENT_SUCCESS_WEBHOOK") return res.json({ ok: true, ignored: true });
+        const eventType = String(payload?.type || "").trim();
+
+        // Cashfree refund webhook: when a refund is successfully processed in
+        // the Cashfree Dashboard/API, mark the matching GMC purchase as refunded.
+        if (eventType === "REFUND_STATUS_WEBHOOK" || eventType === "AUTO_REFUND_STATUS_WEBHOOK") {
+            const refund = payload?.data?.refund || payload?.data?.auto_refund || {};
+            const refundStatus = String(refund.refund_status || "").trim().toUpperCase();
+            const orderId = String(refund.order_id || "").trim();
+            if (!orderId || !["SUCCESS", "PROCESSED"].includes(refundStatus)) {
+                return res.json({ ok: true, ignored: true });
+            }
+            const snapshot = await db.collection(COLLECTIONS.purchases).where("cashfreeOrderId", "==", orderId).limit(1).get();
+            if (snapshot.empty) return res.status(202).json({ ok: true, ignored: true, reason: "purchase_not_found" });
+            const purchaseRef = snapshot.docs[0].ref;
+            await purchaseRef.update({
+                status: "refund",
+                refundStatus: refundStatus.toLowerCase(),
+                refundId: String(refund.refund_id || "").trim(),
+                cashfreeRefundId: String(refund.cf_refund_id || "").trim(),
+                refundAmountPaise: Math.round(Number(refund.refund_amount || 0) * 100),
+                refundArn: String(refund.refund_arn || "").trim(),
+                refundedAt: refund.processed_at || refund.created_at || adminSdk.firestore.FieldValue.serverTimestamp(),
+                refundUpdatedAt: adminSdk.firestore.FieldValue.serverTimestamp()
+            });
+            return res.json({ ok: true, received: true, status: "refund" });
+        }
+
+        if (eventType !== "PAYMENT_SUCCESS_WEBHOOK") return res.json({ ok: true, ignored: true });
         const orderId = String(payload?.data?.order?.order_id || "").trim();
         const payment = payload?.data?.payment || {};
         const paymentId = String(payment.cf_payment_id || "").trim();
@@ -1122,6 +1154,9 @@ app.get("/api/payment/qr/:purchaseId", async (req, res) => {
         const ref = db.collection(COLLECTIONS.purchases).doc(purchaseId); const snapshot = await ref.get();
         if (!snapshot.exists) return res.status(404).json({ message: "Payment session not found." });
         let purchase = snapshot.data();
+        if (purchase.status === "refund") {
+            return res.json({ ok: true, status: "refund", amount: Number(purchase.amountPaise || 0) / 100, productName: purchase.productName || "", planLabel: purchase.planLabel || "", paymentId: purchase.paymentId || null, downloadUrl: null });
+        }
         if (purchase.status === "paid") {
             let emailStatus = purchase.deliveryEmailSentAt ? "sent" : (purchase.deliveryEmailStatus || "pending");
             if (!purchase.deliveryEmailSentAt) { try { const delivery = await deliverPurchaseEmail(purchaseId); emailStatus = delivery.sent || delivery.alreadySent ? "sent" : (delivery.claimedByOther ? "sending" : emailStatus); } catch { emailStatus = "failed"; } }
