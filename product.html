@@ -902,11 +902,11 @@
     transition:width .18s ease, max-height .18s ease;
 }
 .buy-modal-box.payment-active {
-    width:min(1180px,98vw);
+    width:min(470px,calc(100vw - 16px));
     max-height:96vh;
 }
 .buy-modal-box.payment-active .buy-modal-head { padding-bottom:6px; }
-.buy-modal-box.payment-active .buy-step { padding:8px 18px 18px; }
+.buy-modal-box.payment-active .buy-step { padding:8px 14px 14px; }
 .buy-modal-head { display:flex; align-items:center; justify-content:space-between; padding:24px 26px 8px; }
 .buy-modal-head h2 { margin:0; font-size:22px; color:#fff; letter-spacing:.5px; }
 .buy-modal-close { border:0; background:transparent; color:#777; font-size:27px; cursor:pointer; line-height:1; }
@@ -965,7 +965,7 @@
 
     
 .cashfree-inline-container {
-    width:425px; max-width:100%; min-height:700px; height:700px; margin:10px auto 14px;
+    width:425px; max-width:100%; min-height:700px; height:700px; margin:8px auto 10px;
     border-radius:14px; overflow:hidden; background:#fff; border:1px solid #222; display:none;
     -webkit-overflow-scrolling:touch; box-sizing:border-box;
 }
