@@ -247,6 +247,25 @@ function normalizePhone(value) {
     return digits;
 }
 
+/* Convert a plan price such as "₹600", "600", or "600.00" to integer paise. */
+function parsePlanAmount(value) {
+    if (typeof value === "number" && Number.isFinite(value)) {
+        const paise = Math.round(value * 100);
+        return paise > 0 ? paise : 0;
+    }
+
+    const raw = String(value ?? "").trim();
+    if (!raw) return 0;
+
+    // Keep digits and the decimal separator; strip currency symbols/labels.
+    const normalized = raw.replace(/,/g, "").match(/\d+(?:\.\d{1,2})?/);
+    if (!normalized) return 0;
+
+    const rupees = Number(normalized[0]);
+    if (!Number.isFinite(rupees) || rupees <= 0) return 0;
+    return Math.round(rupees * 100);
+}
+
 async function releaseReservedInventory(purchase) {
     const reservedLicenseKey = String(purchase?.reservedLicenseKey || "").trim();
     const reservedAccount = purchase?.reservedAccount && typeof purchase.reservedAccount === "object" ? purchase.reservedAccount : null;
