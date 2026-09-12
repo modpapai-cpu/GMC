@@ -81,7 +81,9 @@ const COLLECTIONS = {
     contacts: "contacts",
     sessions: "admin_sessions",
     otps: "admin_otps",
-    purchases: "purchases"
+    purchases: "purchases",
+    resellers: "resellers",
+    resellerSessions: "reseller_sessions"
 };
 
 function cleanEmail(value) {
@@ -864,10 +866,188 @@ app.get("/api/config", (req, res) => {
     });
 });
 
+
+/* Reseller access and pricing */
+async function getResellerByEmail(email) {
+    const normalized = cleanEmail(email);
+    if (!normalized) return null;
+    const snap = await db.collection(COLLECTIONS.resellers).where("email", "==", normalized).limit(1).get();
+    return snap.empty ? null : docToData(snap.docs[0]);
+}
+
+async function getResellerSession(req) {
+    const token = parseCookies(req).gmc_reseller_session;
+    if (!token) return null;
+    const snap = await db.collection(COLLECTIONS.resellerSessions).doc(token).get();
+    if (!snap.exists) return null;
+    const data = snap.data();
+    if (Date.now() >= Number(data.expiresAt || 0)) {
+        await snap.ref.delete().catch(() => {});
+        return null;
+    }
+    return { token, ...data };
+}
+
+async function requireReseller(req, res, next) {
+    try {
+        const session = await getResellerSession(req);
+        if (!session) return res.status(401).json({ message: "Reseller session expired. Please login again." });
+        const reseller = await getDocument(COLLECTIONS.resellers, session.resellerId);
+        if (!reseller || reseller.active === false) return res.status(403).json({ message: "Reseller access is disabled." });
+        req.resellerSession = session;
+        req.reseller = reseller;
+        next();
+    } catch (error) {
+        console.error("RESELLER SESSION CHECK ERROR:", error);
+        return res.status(500).json({ message: "Unable to check reseller session." });
+    }
+}
+
+function resellerDiscountedAmountPaise(amountPaise, discountPercent) {
+    const amount = Math.max(0, Number(amountPaise) || 0);
+    const discount = Math.max(0, Math.min(100, Number(discountPercent) || 0));
+    return Math.max(1, Math.round(amount * (100 - discount) / 100));
+}
+
+function resellerCanBuyProduct(reseller, productId) {
+    return Array.isArray(reseller?.productIds) && reseller.productIds.map(String).includes(String(productId));
+}
+
+/* Reseller login is intentionally email-based, as requested. */
+app.post("/api/reseller-login", async (req, res) => {
+    try {
+        const email = cleanEmail(req.body?.email);
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ message: "Enter a valid reseller email." });
+        const reseller = await getResellerByEmail(email);
+        if (!reseller || reseller.active === false) return res.status(403).json({ message: "This email is not registered as an active reseller." });
+        const token = crypto.randomBytes(32).toString("hex");
+        const expiresAt = Date.now() + 24 * 60 * 60 * 1000;
+        await db.collection(COLLECTIONS.resellerSessions).doc(token).set({ resellerId: reseller.id, email: reseller.email, expiresAt, createdAt: adminSdk.firestore.FieldValue.serverTimestamp() });
+        const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
+        res.setHeader("Set-Cookie", `gmc_reseller_session=${token}; Max-Age=86400; Path=/; HttpOnly; SameSite=Lax${secure}`);
+        return res.json({ ok: true, reseller: { id: reseller.id, name: reseller.name, email: reseller.email, discountPercent: Number(reseller.discountPercent || 0), productIds: Array.isArray(reseller.productIds) ? reseller.productIds : [] } });
+    } catch (error) {
+        console.error("RESELLER LOGIN ERROR:", error);
+        return res.status(500).json({ message: "Unable to login as reseller." });
+    }
+});
+
+app.get("/api/reseller-status", async (req, res) => {
+    try {
+        const session = await getResellerSession(req);
+        if (!session) return res.json({ authenticated: false });
+        const reseller = await getDocument(COLLECTIONS.resellers, session.resellerId);
+        if (!reseller || reseller.active === false) return res.json({ authenticated: false });
+        return res.json({ authenticated: true, reseller: { id: reseller.id, name: reseller.name, email: reseller.email, discountPercent: Number(reseller.discountPercent || 0), productIds: Array.isArray(reseller.productIds) ? reseller.productIds : [] } });
+    } catch (error) {
+        console.error("RESELLER STATUS ERROR:", error);
+        res.status(500).json({ authenticated: false });
+    }
+});
+
+app.post("/api/reseller-logout", async (req, res) => {
+    try {
+        const session = await getResellerSession(req);
+        if (session) await db.collection(COLLECTIONS.resellerSessions).doc(session.token).delete().catch(() => {});
+    } catch (error) { console.error("RESELLER LOGOUT ERROR:", error); }
+    res.setHeader("Set-Cookie", "gmc_reseller_session=; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Path=/; HttpOnly; SameSite=Lax");
+    res.json({ ok: true });
+});
+
+/* Admin reseller management — only admins can create/change resellers. */
+app.get("/api/resellers", requireAdmin, async (req, res) => {
+    try {
+        const [resellers, products] = await Promise.all([loadCollection(COLLECTIONS.resellers), loadProducts()]);
+        res.json({ resellers, products: products.map(p => ({ id: p.id, name: p.name })) });
+    } catch (error) {
+        console.error("RESELLER LIST ERROR:", error);
+        res.status(500).json({ message: "Unable to load resellers." });
+    }
+});
+
+app.post("/api/resellers", requireAdmin, async (req, res) => {
+    try {
+        const name = String(req.body?.name || "").trim().slice(0, 120);
+        const email = cleanEmail(req.body?.email);
+        const discountPercent = Number(req.body?.discountPercent);
+        const productIds = Array.isArray(req.body?.productIds) ? [...new Set(req.body.productIds.map(x => String(x).trim()).filter(Boolean))] : [];
+        if (!name) return res.status(400).json({ message: "Reseller name is required." });
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ message: "Enter a valid reseller email." });
+        if (!Number.isFinite(discountPercent) || discountPercent < 0 || discountPercent > 100) return res.status(400).json({ message: "Discount must be between 0 and 100%." });
+        const existing = await getResellerByEmail(email);
+        if (existing) return res.status(409).json({ message: "This reseller email already exists." });
+        const productSnap = await db.collection(COLLECTIONS.products).get();
+        const validIds = new Set(productSnap.docs.map(d => d.id));
+        const cleanProductIds = productIds.filter(id => validIds.has(id));
+        const ref = db.collection(COLLECTIONS.resellers).doc();
+        const reseller = { name, email, discountPercent: Math.round(discountPercent * 100) / 100, productIds: cleanProductIds, active: true, createdAt: new Date().toISOString() };
+        await ref.set(reseller);
+        res.status(201).json({ id: ref.id, ...reseller });
+    } catch (error) {
+        console.error("RESELLER ADD ERROR:", error);
+        res.status(500).json({ message: "Unable to add reseller." });
+    }
+});
+
+app.put("/api/resellers/:id", requireAdmin, async (req, res) => {
+    try {
+        const ref = db.collection(COLLECTIONS.resellers).doc(req.params.id);
+        const snap = await ref.get();
+        if (!snap.exists) return res.status(404).json({ message: "Reseller not found." });
+        const old = snap.data();
+        const name = String(req.body?.name ?? old.name ?? "").trim().slice(0, 120);
+        const email = cleanEmail(req.body?.email ?? old.email);
+        const discountPercent = Number(req.body?.discountPercent ?? old.discountPercent ?? 0);
+        const productIds = Array.isArray(req.body?.productIds) ? [...new Set(req.body.productIds.map(x => String(x).trim()).filter(Boolean))] : (Array.isArray(old.productIds) ? old.productIds : []);
+        if (!name) return res.status(400).json({ message: "Reseller name is required." });
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ message: "Enter a valid reseller email." });
+        if (!Number.isFinite(discountPercent) || discountPercent < 0 || discountPercent > 100) return res.status(400).json({ message: "Discount must be between 0 and 100%." });
+        const other = await getResellerByEmail(email);
+        if (other && other.id !== ref.id) return res.status(409).json({ message: "This reseller email already exists." });
+        const productSnap = await db.collection(COLLECTIONS.products).get();
+        const validIds = new Set(productSnap.docs.map(d => d.id));
+        const cleanProductIds = productIds.filter(id => validIds.has(id));
+        const updated = { ...old, name, email, discountPercent: Math.round(discountPercent * 100) / 100, productIds: cleanProductIds, active: req.body?.active === false ? false : true };
+        await ref.set(updated);
+        res.json({ id: ref.id, ...updated });
+    } catch (error) {
+        console.error("RESELLER UPDATE ERROR:", error);
+        res.status(500).json({ message: "Unable to update reseller." });
+    }
+});
+
+app.delete("/api/resellers/:id", requireAdmin, async (req, res) => {
+    try {
+        await db.collection(COLLECTIONS.resellers).doc(req.params.id).delete();
+        const sessions = await db.collection(COLLECTIONS.resellerSessions).where("resellerId", "==", req.params.id).get();
+        const batch = db.batch(); sessions.docs.forEach(d => batch.delete(d.ref)); if (!sessions.empty) await batch.commit();
+        res.json({ ok: true });
+    } catch (error) {
+        console.error("RESELLER DELETE ERROR:", error);
+        res.status(500).json({ message: "Unable to delete reseller." });
+    }
+});
+
 /* Products */
 app.get("/api/products", async (req, res) => {
     try {
-        res.json(await loadProducts());
+        const products = await loadProducts();
+        const resellerSession = await getResellerSession(req);
+        if (!resellerSession) return res.json(products);
+        const reseller = await getDocument(COLLECTIONS.resellers, resellerSession.resellerId);
+        if (!reseller || reseller.active === false) return res.json([]);
+        const allowed = new Set((Array.isArray(reseller.productIds) ? reseller.productIds : []).map(String));
+        const discountPercent = Math.max(0, Math.min(100, Number(reseller.discountPercent || 0)));
+        const filtered = products.filter(p => allowed.has(String(p.id))).map(p => ({
+            ...p,
+            resellerDiscountPercent: discountPercent,
+            plans: (Array.isArray(p.plans) ? p.plans : []).map(plan => {
+                const originalPaise = parsePlanAmount(plan.price);
+                const discountedPaise = originalPaise ? resellerDiscountedAmountPaise(originalPaise, discountPercent) : 0;
+                return { ...plan, resellerPrice: discountedPaise ? `₹${(discountedPaise / 100).toLocaleString("en-IN")}` : plan.price, resellerOriginalPrice: originalPaise ? `₹${(originalPaise / 100).toLocaleString("en-IN")}` : plan.price };
+            })
+        }));
+        res.json(filtered);
     } catch (error) {
         console.error("PRODUCT LIST ERROR:", error);
         res.status(500).json({ message: "Unable to load products." });
@@ -1114,8 +1294,13 @@ app.post("/api/payment/test-success", async (req, res) => {
         const plans = Array.isArray(product.plans) ? product.plans : [];
         const selectedPlan = plans[planIndex];
         if (!selectedPlan) return res.status(400).json({ message: "Selected package is not available." });
-        const amountPaise = parsePlanAmount(selectedPlan.price);
-        if (!amountPaise) return res.status(400).json({ message: "This package does not have a valid numeric price." });
+        const originalAmountPaise = parsePlanAmount(selectedPlan.price);
+        if (!originalAmountPaise) return res.status(400).json({ message: "This package does not have a valid numeric price." });
+        const resellerSession = await getResellerSession(req);
+        let reseller = null;
+        if (resellerSession) { reseller = await getDocument(COLLECTIONS.resellers, resellerSession.resellerId); if (!reseller || reseller.active === false) return res.status(403).json({ message: "Reseller access is disabled." }); if (!resellerCanBuyProduct(reseller, productId)) return res.status(403).json({ message: "This product is not assigned to your reseller account." }); }
+        const resellerDiscountPercent = reseller ? Math.max(0, Math.min(100, Number(reseller.discountPercent || 0))) : 0;
+        const amountPaise = reseller ? resellerDiscountedAmountPaise(originalAmountPaise, resellerDiscountPercent) : originalAmountPaise;
         const purchaseRef = db.collection(COLLECTIONS.purchases).doc();
         let reservedLicenseKey = "", reservedAccount = null, credentialMode = "license";
         await db.runTransaction(async tx => {
@@ -1130,7 +1315,7 @@ app.post("/api/payment/test-success", async (req, res) => {
             tx.update(pref, { plans: pp });
         });
         const downloadUrl = String(product.downloadUrl || "").trim();
-        await purchaseRef.set({ productId, productName: String(product.name || ""), planIndex, planLabel: String(selectedPlan.label || `Package ${planIndex + 1}`), amountPaise, customerName, customerEmail, reservedLicenseKey, reservedAccount, credentialMode, downloadUrl, status: "paid", paymentId: `TEST_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`, licenseKey: credentialMode === "license" ? (reservedLicenseKey || null) : null, account: credentialMode === "userpass" ? reservedAccount : null, testPayment: true, paidAt: adminSdk.firestore.FieldValue.serverTimestamp() });
+        await purchaseRef.set({ productId, productName: String(product.name || ""), planIndex, planLabel: String(selectedPlan.label || `Package ${planIndex + 1}`), amountPaise, originalAmountPaise, resellerId: reseller?.id || null, resellerName: reseller?.name || null, resellerEmail: reseller?.email || null, resellerDiscountPercent, customerName, customerEmail, reservedLicenseKey, reservedAccount, credentialMode, downloadUrl, status: "paid", paymentId: `TEST_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`, licenseKey: credentialMode === "license" ? (reservedLicenseKey || null) : null, account: credentialMode === "userpass" ? reservedAccount : null, testPayment: true, paidAt: adminSdk.firestore.FieldValue.serverTimestamp() });
         let emailStatus = "pending";
         try { const delivery = await deliverPurchaseEmail(purchaseRef.id); emailStatus = delivery.sent || delivery.alreadySent ? "sent" : (delivery.claimedByOther ? "sending" : "pending"); } catch { emailStatus = "failed"; }
         return res.json({ ok: true, testPayment: true, status: "paid", purchaseId: purchaseRef.id, amount: amountPaise / 100, productName: String(product.name || ""), planLabel: String(selectedPlan.label || ""), emailStatus, downloadUrl: downloadUrl || null });
@@ -1174,14 +1359,14 @@ app.post("/api/payment/qr", async (req, res) => {
         });
         const expiresAt = Date.now() + CASHFREE_ORDER_TTL_SECONDS * 1000;
         const cashfreeOrderId = `gmc_${purchaseId}`.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 45);
-        await purchaseRef.set({ productId, productName: String(product.name || ""), planIndex, planLabel: String(selectedPlan.label || `Package ${planIndex + 1}`), amountPaise, customerName, customerEmail, customerPhone, reservedLicenseKey, reservedAccount, credentialMode, downloadUrl: String(product.downloadUrl || "").trim(), status: "creating", createdAt: adminSdk.firestore.FieldValue.serverTimestamp(), expiresAt, cashfreeOrderId });
+        await purchaseRef.set({ productId, productName: String(product.name || ""), planIndex, planLabel: String(selectedPlan.label || `Package ${planIndex + 1}`), amountPaise, originalAmountPaise, resellerId: reseller?.id || null, resellerName: reseller?.name || null, resellerEmail: reseller?.email || null, resellerDiscountPercent, customerName, customerEmail, customerPhone, reservedLicenseKey, reservedAccount, credentialMode, downloadUrl: String(product.downloadUrl || "").trim(), status: "creating", createdAt: adminSdk.firestore.FieldValue.serverTimestamp(), expiresAt, cashfreeOrderId });
         try {
             const origin = String(process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get("host")}`).replace(/\/$/, "");
             const order = await cashfreeRequest("/orders", { method: "POST", headers: { "x-request-id": purchaseId, "x-idempotency-key": crypto.randomUUID() }, body: JSON.stringify({ order_id: cashfreeOrderId, order_amount: amountPaise / 100, order_currency: "INR", customer_details: { customer_id: `gmc_${purchaseId}`, customer_name: customerName, customer_email: customerEmail, customer_phone: customerPhone }, order_meta: { return_url: `${origin}/cashfree-return.html?cashfree_order_id=${encodeURIComponent(cashfreeOrderId)}`, notify_url: `${origin}/api/webhooks/cashfree` }, order_expiry_time: new Date(expiresAt).toISOString(), order_note: `${String(product.name || "GMC").slice(0, 80)} - ${String(selectedPlan.label || "Package").slice(0, 80)}`, order_tags: { purchase_id: purchaseId, product_id: productId } }) });
             const sessionId = String(order.payment_session_id || "").trim();
             if (!sessionId) throw new Error("Cashfree did not return a payment session.");
             await purchaseRef.update({ status: "pending", cashfreePaymentSessionId: sessionId, cashfreeCfOrderId: String(order.cf_order_id || "") });
-            return res.json({ ok: true, purchaseId, orderId: cashfreeOrderId, paymentSessionId: sessionId, amount: amountPaise / 100, amountPaise, productName: String(product.name || ""), planLabel: String(selectedPlan.label || ""), customerEmail, expiresAt, cashfreeMode: CASHFREE_ENV.toLowerCase() });
+            return res.json({ ok: true, purchaseId, orderId: cashfreeOrderId, paymentSessionId: sessionId, amount: amountPaise / 100, amountPaise, originalAmount: originalAmountPaise / 100, resellerDiscountPercent, productName: String(product.name || ""), planLabel: String(selectedPlan.label || ""), customerEmail, expiresAt, cashfreeMode: CASHFREE_ENV.toLowerCase() });
         } catch (error) {
             await purchaseRef.update({ status: "failed", error: String(error.message || "Unable to create Cashfree order.") }).catch(() => {});
             await releaseReservedInventory({ productId, planIndex, reservedLicenseKey, reservedAccount }).catch(() => {});

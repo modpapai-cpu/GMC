@@ -1118,6 +1118,10 @@
                 CONTACT
             </a>
 
+            <a href="reseller-login.html">
+                RESELLER
+            </a>
+
             <a href="admin.html" class="admin-link" aria-label="Admin Panel" title="Admin Panel">
     <svg viewBox="0 0 24 24" aria-hidden="true">
         <path d="M12 3l7 3v5.5c0 4.7-3 8.1-7 9.5-4-1.4-7-4.8-7-9.5V6l7-3z"></path>
@@ -1300,7 +1304,7 @@
             }
 
             container.innerHTML = products.map(product => {
-                const plans = (product.plans || []).map(plan => {const mode=plan.credentialMode||"license",available=mode==="license"?(Array.isArray(plan.licenses)?plan.licenses.length:0):mode==="userpass"?(Array.isArray(plan.accounts)?plan.accounts.length:0):0;return `<div class="price-row"><span>${escapeHtml(plan.label)}</span><span><span class="price">${escapeHtml(plan.price)}</span> <small style="color:${available?'#777':'#ff4444'};font-size:9px">${available?`${available} AVAILABLE`:'OUT OF STOCK'}</small></span></div>`;}).join("");
+                const plans = (product.plans || []).map(plan => {const mode=plan.credentialMode||"license",available=mode==="license"?(Array.isArray(plan.licenses)?plan.licenses.length:0):mode==="userpass"?(Array.isArray(plan.accounts)?plan.accounts.length:0):0;const displayPrice=plan.resellerPrice||plan.price;const original=plan.resellerPrice&&plan.resellerOriginalPrice&&plan.resellerOriginalPrice!==plan.resellerPrice?`<small style="text-decoration:line-through;color:#666;margin-right:5px">${escapeHtml(plan.resellerOriginalPrice)}</small>`:'';return `<div class="price-row"><span>${escapeHtml(plan.label)}</span><span>${original}<span class="price">${escapeHtml(displayPrice)}</span> <small style="color:${available?'#777':'#ff4444'};font-size:9px">${available?`${available} AVAILABLE`:'OUT OF STOCK'}</small></span></div>`;}).join("");
 
                 const imageProxy = product.imageUrl ? `/api/image-proxy?url=${encodeURIComponent(product.imageUrl)}` : "";
                 const imageMarkup = product.imageUrl
@@ -1507,7 +1511,7 @@
             const availabilityText = disabled ? "OUT OF STOCK" : `${available} AVAILABLE`;
             return `<button type="button" class="buy-plan ${selected ? "selected" : ""}" data-plan-index="${index}" ${disabled ? "disabled" : ""}>`
                 + `<span class="buy-plan-label">${escapeHtml(plan.label || `Package ${index+1}`)}</span>`
-                + `<span class="buy-plan-price">${escapeHtml(plan.price || "")}<small style="display:block;color:${disabled?'#ff4444':'#777'};font-size:8px">${availabilityText}</small></span>`
+                + `<span class="buy-plan-price">${plan.resellerPrice&&plan.resellerOriginalPrice&&plan.resellerOriginalPrice!==plan.resellerPrice?`<small style="display:block;text-decoration:line-through;color:#666;font-size:8px">${escapeHtml(plan.resellerOriginalPrice)}</small>`:''}<span>${escapeHtml(plan.resellerPrice || plan.price || "")}</span><small style="display:block;color:${disabled?'#ff4444':'#777'};font-size:8px">${availabilityText}</small></span>`
                 + `</button>`;
         }).join("");
 
