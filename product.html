@@ -974,6 +974,77 @@
 }
 
     
+
+/* ================= CASHFREE PAYMENT-ONLY VIEW ================= */
+.buy-modal.payment-only {
+    padding: 0;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0,0,0,.78);
+    overflow: auto;
+}
+.buy-modal.payment-only .buy-modal-box {
+    width: min(425px, calc(100vw - 16px));
+    max-width: 425px;
+    max-height: none;
+    overflow: visible;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+}
+.buy-modal.payment-only .buy-modal-head,
+.buy-modal.payment-only .buy-step-title,
+.buy-modal.payment-only .buy-summary,
+.buy-modal.payment-only .buy-amount,
+.buy-modal.payment-only .buy-status,
+.buy-modal.payment-only .buy-qr-wrap,
+.buy-modal.payment-only .buy-qr-link,
+.buy-modal.payment-only .buy-success,
+.buy-modal.payment-only #buyError3,
+.buy-modal.payment-only #buyCloseAfter {
+    display: none !important;
+}
+.buy-modal.payment-only .buy-step {
+    padding: 0;
+    margin: 0;
+}
+.buy-modal.payment-only .cashfree-inline-container {
+    display: block;
+    width: 100%;
+    height: 800px;
+    min-height: 800px;
+    max-height: 800px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 12px;
+    overflow: hidden;
+    background: #fff;
+}
+.buy-modal.payment-only .cashfree-inline-container iframe {
+    display: block;
+    width: 100% !important;
+    height: 800px !important;
+    min-height: 800px !important;
+    max-height: 800px !important;
+    border: 0 !important;
+    overflow: hidden !important;
+}
+@media (max-width:600px) {
+    .buy-modal.payment-only .buy-modal-box {
+        width: calc(100vw - 16px);
+        max-width: calc(100vw - 16px);
+    }
+    .buy-modal.payment-only .cashfree-inline-container,
+    .buy-modal.payment-only .cashfree-inline-container iframe {
+        width: 100% !important;
+        height: 800px !important;
+        min-height: 800px !important;
+        max-height: 800px !important;
+    }
+}
+
 .cashfree-inline-container {
     width:425px; max-width:100%; min-height:800px; height:800px; margin:8px auto 4px;
     border-radius:14px; overflow:hidden; background:#fff; border:1px solid #222; display:none;
@@ -1361,6 +1432,7 @@
         buyContinue2.disabled = false;
         buyContinue2.textContent = "CONTINUE TO PAYMENT";
         if (buyTestPayment) buyTestPayment.hidden = true;
+        buyModal.classList.remove("payment-only");
         showBuyStep(1);
     }
 
@@ -1390,6 +1462,7 @@
     function closeBuyModal() {
         stopBuyPolling();
         buyModal.classList.add("hidden");
+        buyModal.classList.remove("payment-only");
         buyModal.setAttribute("aria-hidden", "true");
         document.body.classList.remove("lightbox-open");
     }
@@ -1523,6 +1596,7 @@
                 cashfreeCheckoutContainer.classList.add("active");
             }
             showBuyStep(3);
+            buyModal.classList.add("payment-only");
             const cashfree = Cashfree({ mode: data.cashfreeMode || window.gmcCashfreeMode || "production" });
             const result = await cashfree.checkout({
                 paymentSessionId: data.paymentSessionId,
@@ -1534,6 +1608,8 @@
             });
             if (result?.error) {
                 if (cashfreeCheckoutContainer) cashfreeCheckoutContainer.classList.remove("active");
+                buyModal.classList.remove("payment-only");
+                showBuyStep(2);
                 buyQrStatus.textContent = result.error.message || "Cashfree checkout could not be opened.";
                 return;
             }
@@ -1590,6 +1666,7 @@
             buyQrPackage.textContent = data.planLabel || selectedPlan.label || "—";
             buyQrEmail.textContent = buyCustomer.email;
             buyQrAmount.textContent = `₹${Number(data.amount || 0).toLocaleString("en-IN")}`;
+            buyModal.classList.remove("payment-only");
             buyQrStatus.textContent = "TEST PAYMENT VERIFIED — NO REAL MONEY CHARGED.";
             buyQrWrap.style.display = "none";
             if (cashfreeCheckoutContainer) {
