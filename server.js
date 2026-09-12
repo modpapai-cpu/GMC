@@ -446,6 +446,43 @@ async function deliverPurchaseEmail(purchaseId) {
     }
 }
 
+
+async function sendAccountCreatedEmail({ to, recipientName, role, createdByEmail, discountPercent, productNames }) {
+    const safeTo = cleanEmail(to);
+    if (!safeTo) throw new Error("Recipient email is invalid.");
+
+    const roleLabel = role === "reseller" ? "Reseller" : "Admin";
+    const displayName = String(recipientName || safeTo.split("@")[0] || "there").trim();
+    const creator = cleanEmail(createdByEmail || "") || "GMC Administration";
+    const productList = Array.isArray(productNames) && productNames.length
+        ? productNames.map(name => `<li style="margin:0 0 6px 0;">${escapeHtml(name)}</li>`).join("")
+        : "<li>No products assigned yet.</li>";
+    const productText = Array.isArray(productNames) && productNames.length
+        ? productNames.join(", ")
+        : "No products assigned yet.";
+
+    const subject = `Congratulations! Your GMC ${roleLabel} account has been created`;
+    const discountLine = role === "reseller"
+        ? `<tr><td style="padding:7px 0;color:#777;">Discount</td><td style="padding:7px 0;text-align:right;font-weight:700;">${Number(discountPercent || 0)}%</td></tr>`
+        : "";
+    const productsBlock = role === "reseller"
+        ? `<div style="margin-top:18px;"><div style="font-size:11px;font-weight:800;letter-spacing:1px;color:#ff3030;margin-bottom:8px;">ASSIGNED PRODUCTS</div><ul style="margin:0;padding-left:18px;color:#333;">${productList}</ul></div>`
+        : "";
+
+    const htmlPart = `<!doctype html><html><body style="margin:0;background:#f4f4f4;font-family:Arial,sans-serif;color:#111;"><div style="max-width:620px;margin:30px auto;background:#fff;border:1px solid #ddd;border-radius:14px;overflow:hidden;"><div style="background:#0b0b0b;padding:24px 28px;color:#fff;font-size:22px;font-weight:900;">GMC <span style="color:#ff2222;">STEAM TOOL</span></div><div style="padding:28px;"><div style="font-size:11px;font-weight:800;letter-spacing:1px;color:#ff2222;">ACCOUNT CREATED</div><h2 style="margin:8px 0 12px;">Congratulations, ${escapeHtml(displayName)}! 🎉</h2><p style="line-height:1.6;color:#555;">Your GMC ${roleLabel} account has been successfully created by <strong>${escapeHtml(creator)}</strong>.</p><table style="width:100%;border-collapse:collapse;background:#f7f7f7;border-radius:10px;padding:10px;"><tr><td style="padding:7px 0;color:#777;">Account Type</td><td style="padding:7px 0;text-align:right;font-weight:700;">${roleLabel}</td></tr><tr><td style="padding:7px 0;color:#777;">Login Email</td><td style="padding:7px 0;text-align:right;font-weight:700;word-break:break-all;">${escapeHtml(safeTo)}</td></tr>${discountLine}</table>${productsBlock}<div style="margin-top:20px;padding:14px 16px;background:#111;color:#fff;border-radius:10px;line-height:1.6;font-size:13px;">Login using your registered email and OTP from the GMC website.</div><p style="font-size:12px;color:#888;margin-top:22px;">If you did not expect this account, please contact GMC administration.</p></div></div></body></html>`;
+    const textPart = [
+        `Congratulations, ${displayName}!`,
+        `Your GMC ${roleLabel} account has been created.`,
+        `Created by: ${creator}`,
+        `Login email: ${safeTo}`,
+        role === "reseller" ? `Discount: ${Number(discountPercent || 0)}%` : "",
+        role === "reseller" ? `Assigned products: ${productText}` : "",
+        "Login using your registered email and OTP from the GMC website."
+    ].filter(Boolean).join("\\n");
+
+    return sendEmail({ to: safeTo, subject, textPart, htmlPart });
+}
+
 async function sendEmail({ to, subject, textPart, htmlPart, replyTo }) {
     if (!MAILJET_API_KEY || !MAILJET_SECRET_KEY) {
         throw new Error("Mailjet API credentials are not configured.");
@@ -758,8 +795,20 @@ app.post("/api/admins", requireSuperAdmin, async (req, res) => {
         const ref = db.collection(COLLECTIONS.admins).doc(encodeURIComponent(email));
         if ((await ref.get()).exists) return res.status(409).json({ message: "This admin email already exists." });
 
-        await ref.set({ email, createdAt: new Date().toISOString() });
-        res.status(201).json({ message: "Admin email added.", admins: (await loadAdmins()).map(a => ({ email: a.email })) });
+        await ref.set({ email, createdAt: new Date().toISOString(), createdByEmail: cleanEmail(req.adminSession.email || ADMIN_EMAIL), createdByRole: "super" });
+        let emailSent = false;
+        try {
+            await sendAccountCreatedEmail({
+                to: email,
+                recipientName: email.split("@")[0],
+                role: "admin",
+                createdByEmail: req.adminSession.email || ADMIN_EMAIL
+            });
+            emailSent = true;
+        } catch (mailError) {
+            console.error("ADMIN WELCOME EMAIL ERROR:", mailError);
+        }
+        res.status(201).json({ message: emailSent ? "Admin email added and congratulation email sent." : "Admin email added, but congratulation email could not be sent.", emailSent, admins: (await loadAdmins()).map(a => ({ email: a.email })) });
     } catch (error) {
         console.error("ADMIN ADD ERROR:", error);
         res.status(500).json({ message: "Unable to add admin." });
@@ -1021,7 +1070,23 @@ app.post("/api/resellers", requireAdmin, async (req, res) => {
             createdByRole: req.adminSession.role || "admin"
         };
         await ref.set(reseller);
-        res.status(201).json({ id: ref.id, ...reseller });
+        let emailSent = false;
+        try {
+            const productMap = new Map(productSnap.docs.map(d => [d.id, String(d.data()?.name || d.id)]));
+            const productNames = cleanProductIds.map(id => productMap.get(id)).filter(Boolean);
+            await sendAccountCreatedEmail({
+                to: email,
+                recipientName: name,
+                role: "reseller",
+                createdByEmail: req.adminSession.email || ADMIN_EMAIL,
+                discountPercent: reseller.discountPercent,
+                productNames
+            });
+            emailSent = true;
+        } catch (mailError) {
+            console.error("RESELLER WELCOME EMAIL ERROR:", mailError);
+        }
+        res.status(201).json({ id: ref.id, ...reseller, emailSent });
     } catch (error) {
         console.error("RESELLER ADD ERROR:", error);
         res.status(500).json({ message: "Unable to add reseller." });
