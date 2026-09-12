@@ -3,8 +3,6 @@ const express = require("express");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
-const sharp = require("sharp");
-const jsQR = require("jsqr");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -14,9 +12,9 @@ const SESSION_TTL = 15 * 60 * 1000;
 const MAX_OTP_ATTEMPTS = 5;
 const TEST_PAYMENT_ENABLED = String(process.env.TEST_PAYMENT_ENABLED || "false").toLowerCase() === "true";
 
-// Razorpay sends webhook signatures over the exact raw request body.
+// Cashfree webhook signatures use the exact raw request body.
 // Keep this parser before the global JSON parser.
-app.use("/api/webhooks/razorpay", express.raw({ type: "application/json", limit: "500kb" }));
+app.use("/api/webhooks/cashfree", express.raw({ type: "application/json", limit: "500kb" }));
 app.use(express.json({ limit: "200kb" }));
 app.use(express.urlencoded({ extended: false }));
 app.use(express.static(__dirname));
@@ -206,54 +204,99 @@ const MAILJET_API_KEY = process.env.MAILJET_API_KEY || "";
 const MAILJET_SECRET_KEY = process.env.MAILJET_SECRET_KEY || "";
 const MAIL_FROM = process.env.MAIL_FROM || "modpapai@gmail.com";
 
-// Razorpay QR payments — keep these values only in Render/local environment variables.
-const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID || "";
-const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || "";
-const RAZORPAY_QR_TTL_SECONDS = Math.max(300, Number(process.env.RAZORPAY_QR_TTL_SECONDS || 900));
-const RAZORPAY_WEBHOOK_SECRET = process.env.RAZORPAY_WEBHOOK_SECRET || "";
+// Cashfree Payments — keep credentials only in Render/local environment variables.
+const CASHFREE_CLIENT_ID = process.env.CASHFREE_CLIENT_ID || process.env.CASHFREE_APP_ID || "";
+const CASHFREE_CLIENT_SECRET = process.env.CASHFREE_CLIENT_SECRET || process.env.CASHFREE_SECRET_KEY || "";
+const CASHFREE_ENV = String(process.env.CASHFREE_ENV || "PRODUCTION").toUpperCase() === "SANDBOX" ? "SANDBOX" : "PRODUCTION";
+const CASHFREE_API_VERSION = "2025-01-01";
+const CASHFREE_ORDER_TTL_SECONDS = Math.max(300, Number(process.env.CASHFREE_ORDER_TTL_SECONDS || 900));
 
-function parsePlanAmount(value) {
-    const raw = String(value ?? "").trim();
-    const cleaned = raw.replace(/[^0-9.]/g, "");
-    if (!cleaned) return null;
-    const rupees = Number(cleaned);
-    if (!Number.isFinite(rupees) || rupees <= 0) return null;
-    const paise = Math.round(rupees * 100);
-    return paise > 0 ? paise : null;
+function cashfreeBaseUrl() {
+    return CASHFREE_ENV === "SANDBOX" ? "https://sandbox.cashfree.com/pg" : "https://api.cashfree.com/pg";
 }
 
-async function razorpayRequest(endpoint, options = {}) {
-    if (!RAZORPAY_KEY_ID || !RAZORPAY_KEY_SECRET) {
-        throw new Error("Razorpay API credentials are not configured.");
+async function cashfreeRequest(endpoint, options = {}) {
+    if (!CASHFREE_CLIENT_ID || !CASHFREE_CLIENT_SECRET) {
+        throw new Error("Cashfree payment credentials are not configured.");
     }
-
-    const auth = Buffer.from(`${RAZORPAY_KEY_ID}:${RAZORPAY_KEY_SECRET}`).toString("base64");
-    const response = await fetch(`https://api.razorpay.com/v1${endpoint}`, {
+    const response = await fetch(`${cashfreeBaseUrl()}${endpoint}`, {
         ...options,
         headers: {
-            "Authorization": `Basic ${auth}`,
+            "accept": "application/json",
             "Content-Type": "application/json",
+            "x-api-version": CASHFREE_API_VERSION,
+            "x-client-id": CASHFREE_CLIENT_ID,
+            "x-client-secret": CASHFREE_CLIENT_SECRET,
             ...(options.headers || {})
         }
     });
-
     const text = await response.text();
     let data;
-    try {
-        data = JSON.parse(text);
-    } catch {
-        data = { error: { description: text || "Invalid Razorpay response." } };
-    }
-
+    try { data = text ? JSON.parse(text) : {}; }
+    catch { data = { message: text || "Invalid Cashfree response." }; }
     if (!response.ok) {
-        const message = data?.error?.description || data?.error?.reason || `Razorpay API ${response.status}`;
+        const message = data?.message || data?.type || data?.error?.message || `Cashfree API ${response.status}`;
         throw new Error(message);
     }
-
     return data;
 }
 
+function normalizePhone(value) {
+    const digits = String(value || "").replace(/\D/g, "");
+    if (digits.length === 12 && digits.startsWith("91")) return digits.slice(2);
+    return digits;
+}
 
+async function releaseReservedInventory(purchase) {
+    const reservedLicenseKey = String(purchase?.reservedLicenseKey || "").trim();
+    const reservedAccount = purchase?.reservedAccount && typeof purchase.reservedAccount === "object" ? purchase.reservedAccount : null;
+    if (!reservedLicenseKey && !reservedAccount) return;
+    await db.runTransaction(async tx => {
+        const ref = db.collection(COLLECTIONS.products).doc(String(purchase.productId));
+        const snap = await tx.get(ref);
+        if (!snap.exists) return;
+        const data = snap.data();
+        const plans = Array.isArray(data.plans) ? data.plans.map(p => ({
+            ...p,
+            licenses: Array.isArray(p?.licenses) ? p.licenses.slice() : [],
+            accounts: Array.isArray(p?.accounts) ? p.accounts.map(x => ({ ...x })) : []
+        })) : [];
+        const target = plans[Number(purchase.planIndex)];
+        if (!target) return;
+        if (reservedLicenseKey && !target.licenses.some(x => String(x).toLowerCase() === reservedLicenseKey.toLowerCase())) target.licenses.push(reservedLicenseKey);
+        if (reservedAccount && reservedAccount.username && !target.accounts.some(x => String(x.username).toLowerCase() === String(reservedAccount.username).toLowerCase())) target.accounts.push(reservedAccount);
+        tx.update(ref, { plans });
+    });
+}
+
+async function markCashfreePurchasePaid(purchaseId, paymentId, source = "cashfree") {
+    const ref = db.collection(COLLECTIONS.purchases).doc(String(purchaseId));
+    let shouldDeliver = false;
+    await db.runTransaction(async tx => {
+        const snap = await tx.get(ref);
+        if (!snap.exists) throw new Error("Purchase not found.");
+        const purchase = snap.data();
+        if (purchase.status === "paid") return;
+        const mode = ["license", "userpass", "off"].includes(purchase.credentialMode) ? purchase.credentialMode : "license";
+        tx.update(ref, {
+            status: "paid",
+            paymentId: String(paymentId || ""),
+            licenseKey: mode === "license" ? (String(purchase.reservedLicenseKey || "").trim() || null) : null,
+            account: mode === "userpass" ? (purchase.reservedAccount || null) : null,
+            credentialMode: mode,
+            downloadUrl: String(purchase.downloadUrl || "").trim(),
+            paidAt: adminSdk.firestore.FieldValue.serverTimestamp(),
+            paymentConfirmedBy: source,
+            reservedLicenseKey: null,
+            reservedAccount: null
+        });
+        shouldDeliver = true;
+    });
+    if (shouldDeliver) {
+        try { await deliverPurchaseEmail(purchaseId); }
+        catch (emailError) { console.error("CASHFREE DELIVERY EMAIL FAILED:", emailError); }
+    }
+}
 
 function escapeEmailHtml(value) {
     return String(value ?? "")
@@ -793,7 +836,8 @@ app.get("/api/config", (req, res) => {
     res.json({
         ok: true,
         test_payment_enabled: TEST_PAYMENT_ENABLED,
-        buy_license_url: process.env.BUY_LICENSE_URL || ""
+        buy_license_url: process.env.BUY_LICENSE_URL || "",
+        cashfree_mode: CASHFREE_ENV.toLowerCase()
     });
 });
 
@@ -935,110 +979,49 @@ app.delete("/api/products/:id", requireAdmin, async (req, res) => {
 
 
 
-/* Razorpay webhook — production payment confirmation.
- * Dashboard event: payment.captured
- * The QR creation stores purchase_id in QR notes. Razorpay carries those notes
- * into the payment entity for QR payments, so the webhook can identify the
- * exact reserved purchase without guessing by amount/email.
- */
-app.post("/api/webhooks/razorpay", async (req, res) => {
+/* Cashfree webhook — production payment confirmation. */
+app.post("/api/webhooks/cashfree", async (req, res) => {
     try {
-        if (!RAZORPAY_WEBHOOK_SECRET) {
-            console.error("RAZORPAY WEBHOOK: secret is not configured.");
-            return res.status(503).send("Webhook secret is not configured.");
-        }
-
-        const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.from("");
-        const signature = String(req.get("X-Razorpay-Signature") || "");
-        const expected = crypto
-            .createHmac("sha256", RAZORPAY_WEBHOOK_SECRET)
-            .update(rawBody)
-            .digest("hex");
-
+        if (!CASHFREE_CLIENT_SECRET) return res.status(503).send("Cashfree webhook secret is not configured.");
+        const rawBody = Buffer.isBuffer(req.body) ? req.body.toString("utf8") : "";
+        const signature = String(req.get("x-webhook-signature") || "").trim();
+        const timestamp = String(req.get("x-webhook-timestamp") || "").trim();
+        if (!signature || !timestamp || !rawBody) return res.status(400).send("Missing webhook signature data.");
+        const expected = crypto.createHmac("sha256", CASHFREE_CLIENT_SECRET).update(timestamp + rawBody).digest("base64");
         const sigBuf = Buffer.from(signature, "utf8");
         const expBuf = Buffer.from(expected, "utf8");
-        if (!signature || sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
-            console.warn("RAZORPAY WEBHOOK: invalid signature.");
-            return res.status(401).send("Invalid signature.");
-        }
-
-        const eventId = String(req.get("x-razorpay-event-id") || "").trim();
-        const payload = JSON.parse(rawBody.toString("utf8") || "{}");
-        if (payload.event !== "payment.captured") return res.json({ ok: true, ignored: true });
-
-        const payment = payload?.payload?.payment?.entity || {};
-        const notes = payment.notes && typeof payment.notes === "object" ? payment.notes : {};
-        const purchaseId = String(notes.purchase_id || "").trim();
-        if (!purchaseId) {
-            console.warn("RAZORPAY WEBHOOK: payment.captured has no purchase_id note.", payment.id);
-            return res.status(202).json({ ok: true, ignored: true, reason: "purchase_id_missing" });
-        }
-
-        const ref = db.collection(COLLECTIONS.purchases).doc(purchaseId);
-        let shouldDeliver = false;
-
-        await db.runTransaction(async tx => {
-            const snap = await tx.get(ref);
-            if (!snap.exists) throw new Error("Purchase not found.");
-            const purchase = snap.data();
-            if (purchase.status === "paid") return;
-
-            const expectedAmount = Number(purchase.amountPaise || 0);
-            const paidAmount = Number(payment.amount || 0);
-            if (payment.status !== "captured" || !Number.isFinite(paidAmount) || paidAmount !== expectedAmount) {
-                throw new Error("Captured payment does not match the purchase amount.");
-            }
-
-            tx.update(ref, {
-                status: "paid",
-                paymentId: String(payment.id || ""),
-                webhookEventId: eventId || null,
-                licenseKey: purchase.credentialMode === "license" ? (String(purchase.reservedLicenseKey || "").trim() || null) : null,
-                account: purchase.credentialMode === "userpass" ? (purchase.reservedAccount || null) : null,
-                downloadUrl: String(purchase.downloadUrl || "").trim(),
-                paidAt: adminSdk.firestore.FieldValue.serverTimestamp(),
-                paymentConfirmedBy: "razorpay_webhook"
-            });
-            shouldDeliver = true;
-        });
-
-        if (shouldDeliver) {
-            try {
-                await deliverPurchaseEmail(purchaseId);
-            } catch (emailError) {
-                console.error("RAZORPAY WEBHOOK DELIVERY EMAIL FAILED:", emailError);
-            }
-        }
-
+        if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) return res.status(401).send("Invalid signature.");
+        const payload = JSON.parse(rawBody);
+        if (payload?.type !== "PAYMENT_SUCCESS_WEBHOOK") return res.json({ ok: true, ignored: true });
+        const orderId = String(payload?.data?.order?.order_id || "").trim();
+        const payment = payload?.data?.payment || {};
+        const paymentId = String(payment.cf_payment_id || "").trim();
+        const paymentAmount = Number(payment.payment_amount || 0);
+        if (!orderId || payment.payment_status !== "SUCCESS") return res.json({ ok: true, ignored: true });
+        const snapshot = await db.collection(COLLECTIONS.purchases).where("cashfreeOrderId", "==", orderId).limit(1).get();
+        if (snapshot.empty) return res.status(202).json({ ok: true, ignored: true, reason: "purchase_not_found" });
+        const purchaseId = snapshot.docs[0].id;
+        const purchase = snapshot.docs[0].data();
+        if (Math.round(paymentAmount * 100) !== Number(purchase.amountPaise || 0)) return res.status(400).send("Payment amount mismatch.");
+        await markCashfreePurchasePaid(purchaseId, paymentId, "cashfree_webhook");
         return res.json({ ok: true, received: true });
     } catch (error) {
-        console.error("RAZORPAY WEBHOOK ERROR:", error);
+        console.error("CASHFREE WEBHOOK ERROR:", error);
         return res.status(500).json({ message: "Webhook processing failed." });
     }
 });
 
-/* Razorpay — customer-facing QR payment flow.
- * The amount is always read from the Firestore product on the server.
- */
+/* Local test payment flow. */
 app.post("/api/payment/test-success", async (req, res) => {
-    if (!TEST_PAYMENT_ENABLED) {
-        return res.status(404).json({ message: "Test payment is disabled." });
-    }
-
+    if (!TEST_PAYMENT_ENABLED) return res.status(404).json({ message: "Test payment is disabled." });
     try {
         const productId = String(req.body?.productId || "").trim();
         const planIndex = Number(req.body?.planIndex);
         const customerName = String(req.body?.name || "").trim().slice(0, 120);
         const customerEmail = cleanEmail(req.body?.email);
-
-        if (!productId || !Number.isInteger(planIndex) || planIndex < 0) {
-            return res.status(400).json({ message: "Invalid product or package." });
-        }
+        if (!productId || !Number.isInteger(planIndex) || planIndex < 0) return res.status(400).json({ message: "Invalid product or package." });
         if (customerName.length < 2) return res.status(400).json({ message: "Enter your name." });
-        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customerEmail)) {
-            return res.status(400).json({ message: "Enter a valid email address." });
-        }
-
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customerEmail)) return res.status(400).json({ message: "Enter a valid email address." });
         const product = await getDocument(COLLECTIONS.products, productId);
         if (!product) return res.status(404).json({ message: "Product not found." });
         const plans = Array.isArray(product.plans) ? product.plans : [];
@@ -1046,364 +1029,111 @@ app.post("/api/payment/test-success", async (req, res) => {
         if (!selectedPlan) return res.status(400).json({ message: "Selected package is not available." });
         const amountPaise = parsePlanAmount(selectedPlan.price);
         if (!amountPaise) return res.status(400).json({ message: "This package does not have a valid numeric price." });
-
         const purchaseRef = db.collection(COLLECTIONS.purchases).doc();
-        let reservedLicenseKey = "";
-        let reservedAccount = null;
-        let credentialMode = "license";
-
+        let reservedLicenseKey = "", reservedAccount = null, credentialMode = "license";
         await db.runTransaction(async tx => {
-            const pref = db.collection(COLLECTIONS.products).doc(productId);
-            const snap = await tx.get(pref);
+            const pref = db.collection(COLLECTIONS.products).doc(productId); const snap = await tx.get(pref);
             if (!snap.exists) throw new Error("Product not found.");
-            const data = snap.data();
-            const pp = Array.isArray(data.plans) ? data.plans.map(p => ({
-                ...p,
-                licenses: Array.isArray(p?.licenses) ? p.licenses.slice() : [],
-                accounts: Array.isArray(p?.accounts) ? p.accounts.map(x => ({ ...x })) : []
-            })) : [];
-            const plan = pp[planIndex];
-            if (!plan) throw new Error("Selected package is not available.");
+            const data = snap.data(); const pp = Array.isArray(data.plans) ? data.plans.map(p => ({ ...p, licenses: Array.isArray(p?.licenses) ? p.licenses.slice() : [], accounts: Array.isArray(p?.accounts) ? p.accounts.map(x => ({ ...x })) : [] })) : [];
+            const plan = pp[planIndex]; if (!plan) throw new Error("Selected package is not available.");
             credentialMode = ["license", "userpass", "off"].includes(plan.credentialMode) ? plan.credentialMode : "license";
             if (credentialMode === "off") throw new Error("This plan is currently disabled.");
-            if (credentialMode === "license") {
-                if (!plan.licenses.length) throw new Error("This plan is currently out of stock.");
-                reservedLicenseKey = String(plan.licenses.shift()).trim();
-            } else if (credentialMode === "userpass") {
-                if (!plan.accounts.length) throw new Error("This plan is currently out of stock.");
-                reservedAccount = plan.accounts.shift();
-            }
+            if (credentialMode === "license") { if (!plan.licenses.length) throw new Error("This plan is currently out of stock."); reservedLicenseKey = String(plan.licenses.shift()).trim(); }
+            else if (credentialMode === "userpass") { if (!plan.accounts.length) throw new Error("This plan is currently out of stock."); reservedAccount = plan.accounts.shift(); }
             tx.update(pref, { plans: pp });
         });
-
         const downloadUrl = String(product.downloadUrl || "").trim();
-        await purchaseRef.set({
-            productId,
-            productName: String(product.name || ""),
-            planIndex,
-            planLabel: String(selectedPlan.label || `Package ${planIndex + 1}`),
-            amountPaise,
-            customerName,
-            customerEmail,
-            status: "paid",
-            paymentId: `TEST_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`,
-            licenseKey: credentialMode === "license" ? (reservedLicenseKey || null) : null,
-            account: credentialMode === "userpass" ? reservedAccount : null,
-            credentialMode,
-            downloadUrl,
-            testPayment: true,
-            paidAt: adminSdk.firestore.FieldValue.serverTimestamp()
-        });
-
+        await purchaseRef.set({ productId, productName: String(product.name || ""), planIndex, planLabel: String(selectedPlan.label || `Package ${planIndex + 1}`), amountPaise, customerName, customerEmail, reservedLicenseKey, reservedAccount, credentialMode, downloadUrl, status: "paid", paymentId: `TEST_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`, licenseKey: credentialMode === "license" ? (reservedLicenseKey || null) : null, account: credentialMode === "userpass" ? reservedAccount : null, testPayment: true, paidAt: adminSdk.firestore.FieldValue.serverTimestamp() });
         let emailStatus = "pending";
-        try {
-            const delivery = await deliverPurchaseEmail(purchaseRef.id);
-            emailStatus = delivery.sent || delivery.alreadySent ? "sent" : (delivery.claimedByOther ? "sending" : "pending");
-        } catch (emailError) {
-            console.error("TEST PURCHASE DELIVERY EMAIL FAILED:", emailError);
-            emailStatus = "failed";
-        }
-
-        return res.json({
-            ok: true,
-            testPayment: true,
-            status: "paid",
-            purchaseId: purchaseRef.id,
-            amount: amountPaise / 100,
-            productName: String(product.name || ""),
-            planLabel: String(selectedPlan.label || ""),
-            emailStatus,
-            downloadUrl: downloadUrl || null
-        });
-    } catch (error) {
-        console.error("TEST PAYMENT FAILED:", error);
-        return res.status(400).json({ message: error.message || "Unable to complete test payment." });
-    }
+        try { const delivery = await deliverPurchaseEmail(purchaseRef.id); emailStatus = delivery.sent || delivery.alreadySent ? "sent" : (delivery.claimedByOther ? "sending" : "pending"); } catch { emailStatus = "failed"; }
+        return res.json({ ok: true, testPayment: true, status: "paid", purchaseId: purchaseRef.id, amount: amountPaise / 100, productName: String(product.name || ""), planLabel: String(selectedPlan.label || ""), emailStatus, downloadUrl: downloadUrl || null });
+    } catch (error) { console.error("TEST PAYMENT FAILED:", error); return res.status(400).json({ message: error.message || "Unable to complete test payment." }); }
 });
 
+/* Cashfree customer-facing checkout flow. */
 app.post("/api/payment/qr", async (req, res) => {
     try {
         const productId = String(req.body?.productId || "").trim();
         const planIndex = Number(req.body?.planIndex);
         const customerName = String(req.body?.name || "").trim().slice(0, 120);
         const customerEmail = cleanEmail(req.body?.email);
-
+        const customerPhone = normalizePhone(req.body?.phone);
         if (!productId) return res.status(400).json({ message: "Product is required." });
-        if (!Number.isInteger(planIndex) || planIndex < 0) {
-            return res.status(400).json({ message: "Invalid package selected." });
-        }
-        if (customerName.length < 2) {
-            return res.status(400).json({ message: "Enter your name." });
-        }
-        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customerEmail)) {
-            return res.status(400).json({ message: "Enter a valid email address." });
-        }
-        if (!RAZORPAY_KEY_ID || !RAZORPAY_KEY_SECRET) {
-            return res.status(503).json({ message: "Razorpay payment service is not configured on the server." });
-        }
-
+        if (!Number.isInteger(planIndex) || planIndex < 0) return res.status(400).json({ message: "Invalid package selected." });
+        if (customerName.length < 2) return res.status(400).json({ message: "Enter your name." });
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customerEmail)) return res.status(400).json({ message: "Enter a valid email address." });
+        if (!/^[6-9]\d{9}$/.test(customerPhone)) return res.status(400).json({ message: "Enter a valid 10-digit Indian mobile number." });
+        if (!CASHFREE_CLIENT_ID || !CASHFREE_CLIENT_SECRET) return res.status(503).json({ message: "Cashfree payment service is not configured on the server." });
         const product = await getDocument(COLLECTIONS.products, productId);
         if (!product) return res.status(404).json({ message: "Product not found." });
-
         const plans = Array.isArray(product.plans) ? product.plans : [];
         const selectedPlan = plans[planIndex];
         if (!selectedPlan) return res.status(400).json({ message: "Selected package is not available." });
-
         const amountPaise = parsePlanAmount(selectedPlan.price);
-        if (!amountPaise) {
-            return res.status(400).json({ message: "This package does not have a valid numeric price." });
-        }
-
+        if (!amountPaise) return res.status(400).json({ message: "This package does not have a valid numeric price." });
         const purchaseRef = db.collection(COLLECTIONS.purchases).doc();
         const purchaseId = purchaseRef.id;
-        let reservedLicenseKey = ""; let reservedAccount = null; let credentialMode = "license";
-        await db.runTransaction(async tx=>{const pref=db.collection(COLLECTIONS.products).doc(productId);const snap=await tx.get(pref);if(!snap.exists)throw new Error("Product not found.");const data=snap.data(),pp=Array.isArray(data.plans)?data.plans.map(p=>({...p,licenses:Array.isArray(p?.licenses)?p.licenses.slice():[],accounts:Array.isArray(p?.accounts)?p.accounts.map(x=>({...x})):[]})):[];const plan=pp[planIndex];if(!plan)throw new Error("Selected package is not available.");credentialMode=["license","userpass","off"].includes(plan.credentialMode)?plan.credentialMode:"license";if(credentialMode==="off")throw new Error("This plan is currently disabled.");if(credentialMode==="license"){if(!plan.licenses.length)throw new Error("This plan is currently out of stock.");reservedLicenseKey=String(plan.licenses.shift()).trim();}else if(credentialMode==="userpass"){if(!plan.accounts.length)throw new Error("This plan is currently out of stock.");reservedAccount=plan.accounts.shift();}tx.update(pref,{plans:pp});});
-        const now = Date.now();
-        const expiresAt = now + RAZORPAY_QR_TTL_SECONDS * 1000;
-        const closeBy = Math.floor(expiresAt / 1000);
-
-        await purchaseRef.set({
-            productId,
-            productName: String(product.name || ""),
-            planIndex,
-            planLabel: String(selectedPlan.label || `Package ${planIndex + 1}`),
-            amountPaise,
-            customerName,
-            customerEmail,
-            reservedLicenseKey,
-            reservedAccount,
-            credentialMode,
-            downloadUrl: String(product.downloadUrl || "").trim(),
-            status: "creating",
-            createdAt: adminSdk.firestore.FieldValue.serverTimestamp(),
-            expiresAt
+        let reservedLicenseKey = "", reservedAccount = null, credentialMode = "license";
+        await db.runTransaction(async tx => {
+            const pref = db.collection(COLLECTIONS.products).doc(productId); const snap = await tx.get(pref);
+            if (!snap.exists) throw new Error("Product not found.");
+            const data = snap.data(); const pp = Array.isArray(data.plans) ? data.plans.map(p => ({ ...p, licenses: Array.isArray(p?.licenses) ? p.licenses.slice() : [], accounts: Array.isArray(p?.accounts) ? p.accounts.map(x => ({ ...x })) : [] })) : [];
+            const plan = pp[planIndex]; if (!plan) throw new Error("Selected package is not available.");
+            credentialMode = ["license", "userpass", "off"].includes(plan.credentialMode) ? plan.credentialMode : "license";
+            if (credentialMode === "off") throw new Error("This plan is currently disabled.");
+            if (credentialMode === "license") { if (!plan.licenses.length) throw new Error("This plan is currently out of stock."); reservedLicenseKey = String(plan.licenses.shift()).trim(); }
+            else if (credentialMode === "userpass") { if (!plan.accounts.length) throw new Error("This plan is currently out of stock."); reservedAccount = plan.accounts.shift(); }
+            tx.update(pref, { plans: pp });
         });
-
+        const expiresAt = Date.now() + CASHFREE_ORDER_TTL_SECONDS * 1000;
+        const cashfreeOrderId = `gmc_${purchaseId}`.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 45);
+        await purchaseRef.set({ productId, productName: String(product.name || ""), planIndex, planLabel: String(selectedPlan.label || `Package ${planIndex + 1}`), amountPaise, customerName, customerEmail, customerPhone, reservedLicenseKey, reservedAccount, credentialMode, downloadUrl: String(product.downloadUrl || "").trim(), status: "creating", createdAt: adminSdk.firestore.FieldValue.serverTimestamp(), expiresAt, cashfreeOrderId });
         try {
-            const qr = await razorpayRequest("/payments/qr_codes", {
-                method: "POST",
-                body: JSON.stringify({
-                    type: "upi_qr",
-                    name: "GMC",
-                    usage: "single_use",
-                    fixed_amount: true,
-                    payment_amount: amountPaise,
-                    description: `${String(product.name || "GMC").slice(0, 70)} - ${String(selectedPlan.label || "").slice(0, 50)}`,
-                    close_by: closeBy,
-                    notes: {
-                        purchase_id: purchaseId,
-                        product_id: productId,
-                        customer_email: customerEmail
-                    }
-                })
-            });
-
-            const qrImageUrl = String(qr.image_url || qr.short_url || "").trim();
-            if (!qr.id || !qrImageUrl) {
-                throw new Error("Razorpay did not return a QR image URL.");
-            }
-
-            await purchaseRef.update({
-                status: "pending",
-                razorpayQrId: qr.id,
-                qrImageUrl,
-                qrStatus: qr.status || "active",
-                expiresAt
-            });
-
-            return res.json({
-                ok: true,
-                purchaseId,
-                qrId: qr.id,
-                qrImageUrl,
-                amount: amountPaise / 100,
-                amountPaise,
-                productName: String(product.name || ""),
-                planLabel: String(selectedPlan.label || ""),
-                customerEmail,
-                expiresAt
-            });
+            const origin = `${req.protocol}://${req.get("host")}`;
+            const order = await cashfreeRequest("/orders", { method: "POST", headers: { "x-request-id": purchaseId, "x-idempotency-key": crypto.randomUUID() }, body: JSON.stringify({ order_id: cashfreeOrderId, order_amount: amountPaise / 100, order_currency: "INR", customer_details: { customer_id: `gmc_${purchaseId}`, customer_name: customerName, customer_email: customerEmail, customer_phone: customerPhone }, order_meta: { return_url: `${origin}/product.html?cashfree_order_id=${encodeURIComponent(cashfreeOrderId)}`, notify_url: `${origin}/api/webhooks/cashfree` }, order_expiry_time: new Date(expiresAt).toISOString(), order_note: `${String(product.name || "GMC").slice(0, 80)} - ${String(selectedPlan.label || "Package").slice(0, 80)}`, order_tags: { purchase_id: purchaseId, product_id: productId } }) });
+            const sessionId = String(order.payment_session_id || "").trim();
+            if (!sessionId) throw new Error("Cashfree did not return a payment session.");
+            await purchaseRef.update({ status: "pending", cashfreePaymentSessionId: sessionId, cashfreeCfOrderId: String(order.cf_order_id || "") });
+            return res.json({ ok: true, purchaseId, orderId: cashfreeOrderId, paymentSessionId: sessionId, amount: amountPaise / 100, amountPaise, productName: String(product.name || ""), planLabel: String(selectedPlan.label || ""), customerEmail, expiresAt, cashfreeMode: CASHFREE_ENV.toLowerCase() });
         } catch (error) {
-            await purchaseRef.update({status:"failed",error:String(error.message||"Unable to create Razorpay QR.")}).catch(()=>{});
-            if(reservedLicenseKey || reservedAccount){await db.runTransaction(async tx=>{const prodRef=db.collection(COLLECTIONS.products).doc(productId),ps=await tx.get(prodRef);if(!ps.exists)return;const data=ps.data(),pp=Array.isArray(data.plans)?data.plans.map(p=>({...p,licenses:Array.isArray(p?.licenses)?p.licenses.slice():[],accounts:Array.isArray(p?.accounts)?p.accounts.map(x=>({...x})):[]})):[];const target=pp[planIndex];if(target){if(reservedLicenseKey&&!target.licenses.some(x=>String(x).toLowerCase()===reservedLicenseKey.toLowerCase()))target.licenses.push(reservedLicenseKey);if(reservedAccount&&!target.accounts.some(x=>String(x.username).toLowerCase()===String(reservedAccount.username).toLowerCase()))target.accounts.push(reservedAccount);}tx.update(prodRef,{plans:pp});}).catch(()=>{});}
-            console.error("RAZORPAY QR CREATE FAILED:", error);
-            return res.status(502).json({
-                message: `Unable to create Razorpay QR: ${error.message || "Unknown Razorpay error."}`
-            });
+            await purchaseRef.update({ status: "failed", error: String(error.message || "Unable to create Cashfree order.") }).catch(() => {});
+            await releaseReservedInventory({ productId, planIndex, reservedLicenseKey, reservedAccount }).catch(() => {});
+            console.error("CASHFREE ORDER CREATE FAILED:", error);
+            return res.status(502).json({ message: `Unable to create Cashfree payment: ${error.message || "Unknown error."}` });
         }
-    } catch (error) {
-        console.error("PAYMENT QR REQUEST FAILED:", error);
-        return res.status(500).json({ message: "Unable to start payment." });
-    }
-});
-
-/* Return only the actual QR region from Razorpay's portrait QR poster.
- * The QR position is detected from the real returned image instead of using a
- * fixed CSS crop, so it remains readable across Razorpay image layouts.
- */
-app.get("/api/payment/qr-image/:purchaseId", async (req, res) => {
-    try {
-        const purchaseId = String(req.params.purchaseId || "").trim();
-        if (!purchaseId) return res.status(400).send("Purchase ID is required.");
-
-        const snapshot = await db.collection(COLLECTIONS.purchases).doc(purchaseId).get();
-        if (!snapshot.exists) return res.status(404).send("Payment session not found.");
-
-        const purchase = snapshot.data();
-        const sourceUrl = String(purchase.qrImageUrl || "").trim();
-        if (!sourceUrl) return res.status(404).send("QR image is not ready.");
-
-        const sourceResponse = await fetch(sourceUrl, {
-            redirect: "follow",
-            headers: { "User-Agent": "Mozilla/5.0", "Accept": "image/*,*/*;q=0.8" }
-        });
-        if (!sourceResponse.ok) {
-            return res.status(502).send(`Razorpay QR image request failed (${sourceResponse.status}).`);
-        }
-
-        const sourceBuffer = Buffer.from(await sourceResponse.arrayBuffer());
-        const decoded = await sharp(sourceBuffer).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-        const { data, info } = decoded;
-
-        const code = jsQR(new Uint8ClampedArray(data), info.width, info.height, {
-            inversionAttempts: "attemptBoth"
-        });
-
-        if (!code || !code.location) {
-            // Fallback: return the original image if detection fails rather than
-            // breaking the payment screen.
-            res.setHeader("Cache-Control", "private, max-age=30");
-            res.setHeader("Content-Type", sourceResponse.headers.get("content-type") || "image/png");
-            return res.send(sourceBuffer);
-        }
-
-        const points = [
-            code.location.topLeft,
-            code.location.topRight,
-            code.location.bottomLeft,
-            code.location.bottomRight
-        ];
-
-        const xs = points.map(p => Number(p.x));
-        const ys = points.map(p => Number(p.y));
-        const minX = Math.max(0, Math.floor(Math.min(...xs) - 18));
-        const minY = Math.max(0, Math.floor(Math.min(...ys) - 18));
-        const maxX = Math.min(info.width, Math.ceil(Math.max(...xs) + 18));
-        const maxY = Math.min(info.height, Math.ceil(Math.max(...ys) + 18));
-        const width = maxX - minX;
-        const height = maxY - minY;
-
-        if (width < 80 || height < 80) {
-            throw new Error("Detected QR region is too small.");
-        }
-
-        const cropped = await sharp(sourceBuffer)
-            .extract({ left: minX, top: minY, width, height })
-            .png()
-            .toBuffer();
-
-        res.setHeader("Cache-Control", "private, max-age=60");
-        res.setHeader("Content-Type", "image/png");
-        return res.send(cropped);
-    } catch (error) {
-        console.error("RAZORPAY QR IMAGE CROP FAILED:", error);
-        return res.status(502).send("Unable to prepare the QR image.");
-    }
+    } catch (error) { console.error("PAYMENT REQUEST FAILED:", error); return res.status(500).json({ message: error.message || "Unable to start payment." }); }
 });
 
 app.get("/api/payment/qr/:purchaseId", async (req, res) => {
     try {
         const purchaseId = String(req.params.purchaseId || "").trim();
         if (!purchaseId) return res.status(400).json({ message: "Purchase ID is required." });
-
-        const ref = db.collection(COLLECTIONS.purchases).doc(purchaseId);
-        const snapshot = await ref.get();
+        const ref = db.collection(COLLECTIONS.purchases).doc(purchaseId); const snapshot = await ref.get();
         if (!snapshot.exists) return res.status(404).json({ message: "Payment session not found." });
-
-        const purchase = snapshot.data();
+        let purchase = snapshot.data();
         if (purchase.status === "paid") {
             let emailStatus = purchase.deliveryEmailSentAt ? "sent" : (purchase.deliveryEmailStatus || "pending");
-            if (!purchase.deliveryEmailSentAt) {
-                try {
-                    const delivery = await deliverPurchaseEmail(purchaseId);
-                    emailStatus = delivery.sent || delivery.alreadySent ? "sent" : (delivery.claimedByOther ? "sending" : emailStatus);
-                } catch (emailError) {
-                    console.error("PURCHASE DELIVERY EMAIL FAILED:", emailError);
-                    emailStatus = "failed";
-                }
-            }
-            return res.json({ok:true,status:"paid",amount:Number(purchase.amountPaise||0)/100,productName:purchase.productName||"",planLabel:purchase.planLabel||"",paymentId:purchase.paymentId||null,downloadUrl:String(purchase.downloadUrl||"")||null,emailStatus});
+            if (!purchase.deliveryEmailSentAt) { try { const delivery = await deliverPurchaseEmail(purchaseId); emailStatus = delivery.sent || delivery.alreadySent ? "sent" : (delivery.claimedByOther ? "sending" : emailStatus); } catch { emailStatus = "failed"; } }
+            return res.json({ ok: true, status: "paid", amount: Number(purchase.amountPaise || 0) / 100, productName: purchase.productName || "", planLabel: purchase.planLabel || "", paymentId: purchase.paymentId || null, downloadUrl: String(purchase.downloadUrl || "") || null, emailStatus });
         }
-
         if (Date.now() >= Number(purchase.expiresAt || 0)) {
-            if(purchase.status!=="expired"){const reserved=String(purchase.reservedLicenseKey||"").trim(),account=purchase.reservedAccount||null;if(reserved||account){await db.runTransaction(async tx=>{const fresh=await tx.get(ref);if(!fresh.exists||fresh.data().status==="paid")return;const prodRef=db.collection(COLLECTIONS.products).doc(purchase.productId),ps=await tx.get(prodRef);if(!ps.exists)return;const data=ps.data(),pp=Array.isArray(data.plans)?data.plans.map(p=>({...p,licenses:Array.isArray(p?.licenses)?p.licenses.slice():[],accounts:Array.isArray(p?.accounts)?p.accounts.map(x=>({...x})):[]})):[];const target=pp[Number(purchase.planIndex)];if(target){if(reserved&&!target.licenses.some(x=>String(x).toLowerCase()===reserved.toLowerCase()))target.licenses.push(reserved);if(account&&!target.accounts.some(x=>String(x.username).toLowerCase()===String(account.username).toLowerCase()))target.accounts.push(account);}tx.update(prodRef,{plans:pp});tx.update(ref,{status:"expired",reservedLicenseKey:null,reservedAccount:null});}).catch(()=>{});}else await ref.update({status:"expired"}).catch(()=>{});}return res.json({ok:true,status:"expired"});
+            if (purchase.status !== "expired" && purchase.status !== "paid") { await releaseReservedInventory(purchase).catch(() => {}); await ref.update({ status: "expired", reservedLicenseKey: null, reservedAccount: null }).catch(() => {}); }
+            return res.json({ ok: true, status: "expired" });
         }
-
-        if (!purchase.razorpayQrId) {
-            return res.status(409).json({ message: "Payment QR is not ready yet." });
+        const orderId = String(purchase.cashfreeOrderId || "").trim();
+        if (!orderId) return res.status(409).json({ message: "Cashfree order is not ready yet." });
+        const order = await cashfreeRequest(`/orders/${encodeURIComponent(orderId)}`, { method: "GET" });
+        if (String(order.order_status || "").toUpperCase() === "PAID") {
+            if (Math.round(Number(order.order_amount || 0) * 100) !== Number(purchase.amountPaise || 0)) return res.status(400).json({ message: "Payment amount mismatch." });
+            const payments = await cashfreeRequest(`/orders/${encodeURIComponent(orderId)}/payments`, { method: "GET" }).catch(() => []);
+            const success = Array.isArray(payments) ? payments.find(p => String(p?.payment_status || "").toUpperCase() === "SUCCESS" && Math.round(Number(p?.payment_amount || 0) * 100) === Number(purchase.amountPaise || 0)) : null;
+            await markCashfreePurchasePaid(purchaseId, success?.cf_payment_id || "", "cashfree_status_check");
+            const fresh = (await ref.get()).data() || {};
+            const delivery = fresh.deliveryEmailSentAt ? "sent" : (fresh.deliveryEmailStatus || "pending");
+            return res.json({ ok: true, status: "paid", amount: Number(purchase.amountPaise || 0) / 100, productName: purchase.productName || "", planLabel: purchase.planLabel || "", paymentId: success?.cf_payment_id || null, downloadUrl: String(purchase.downloadUrl || "") || null, emailStatus: delivery });
         }
-
-        const payments = await razorpayRequest(
-            `/payments/qr_codes/${encodeURIComponent(purchase.razorpayQrId)}/payments?count=10`,
-            { method: "GET" }
-        );
-
-        const items = Array.isArray(payments.items) ? payments.items : [];
-        const captured = items.find(item =>
-            item && item.status === "captured" &&
-            Number(item.amount) === Number(purchase.amountPaise)
-        );
-
-        if (captured) {
-            const licenseKey = String(purchase.reservedLicenseKey || "").trim();
-            const account = purchase.reservedAccount && typeof purchase.reservedAccount === "object"
-                ? { username: String(purchase.reservedAccount.username || "").trim(), password: String(purchase.reservedAccount.password || "") }
-                : null;
-            const mode = ["license", "userpass", "off"].includes(purchase.credentialMode)
-                ? purchase.credentialMode
-                : "license";
-            const product = await getDocument(COLLECTIONS.products, purchase.productId);
-            const downloadUrl = String(product?.downloadUrl || "").trim();
-            await ref.update({
-                status: "paid",
-                paymentId: captured.id,
-                licenseKey: mode === "license" ? (licenseKey || null) : null,
-                account: mode === "userpass" ? account : null,
-                credentialMode: mode,
-                downloadUrl,
-                paidAt: adminSdk.firestore.FieldValue.serverTimestamp()
-            });
-
-            let emailStatus = "pending";
-            try {
-                const delivery = await deliverPurchaseEmail(purchaseId);
-                emailStatus = delivery.sent || delivery.alreadySent ? "sent" : (delivery.claimedByOther ? "sending" : "pending");
-            } catch (emailError) {
-                console.error("PURCHASE DELIVERY EMAIL FAILED:", emailError);
-                emailStatus = "failed";
-            }
-
-            return res.json({
-                ok: true,
-                status: "paid",
-                amount: Number(purchase.amountPaise || 0) / 100,
-                productName: purchase.productName || "",
-                planLabel: purchase.planLabel || "",
-                paymentId: captured.id,
-                downloadUrl: downloadUrl || null,
-                emailStatus
-            });
-        }
-
-        return res.json({
-            ok: true,
-            status: "pending",
-            amount: Number(purchase.amountPaise || 0) / 100
-        });
-    } catch (error) {
-        console.error("RAZORPAY QR STATUS FAILED:", error);
-        return res.status(502).json({ message: `Unable to check payment: ${error.message || "Unknown error."}` });
-    }
+        return res.json({ ok: true, status: "pending", amount: Number(purchase.amountPaise || 0) / 100 });
+    } catch (error) { console.error("CASHFREE PAYMENT STATUS FAILED:", error); return res.status(502).json({ message: `Unable to check payment: ${error.message || "Unknown error."}` }); }
 });
 
 /* Google Drive image proxy */

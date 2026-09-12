@@ -6,6 +6,7 @@
 
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23050505'/%3E%3Ctext x='32' y='45' text-anchor='middle' font-family='Arial' font-size='42' font-weight='900' fill='%23ff1010'%3EG%3C/text%3E%3C/svg%3E">
 <title>GMC — Products</title>
+<script src="https://sdk.cashfree.com/js/v3/cashfree.js"></script>
 
     <style>
         * {
@@ -889,7 +890,7 @@
             }
         }
     
-/* ================= BUY / RAZORPAY MODAL ================= */
+/* ================= BUY / CASHFREE MODAL ================= */
 .buy-modal.hidden { display:none !important; }
 .buy-modal {
     position:fixed; inset:0; z-index:9999; display:flex; align-items:center; justify-content:center;
@@ -1051,7 +1052,7 @@
     <div class="image-lightbox" id="imageLightbox" aria-hidden="true"><button class="close" type="button" aria-label="Close image">&times;</button><img id="lightboxImage" src="" alt="Product preview"></div>
 
 
-    <!-- BUY / RAZORPAY FLOW -->
+    <!-- BUY / CASHFREE FLOW -->
     <div class="buy-modal hidden" id="buyModal" aria-hidden="true">
         <div class="buy-modal-box">
             <div class="buy-modal-head">
@@ -1061,7 +1062,7 @@
 
             <section class="buy-step" id="buyStep1">
                 <div class="buy-step-title">CUSTOMER DETAILS</div>
-                <div class="buy-step-note">Enter your name and email address to continue.</div>
+                <div class="buy-step-note">Enter your name, email address and mobile number to continue.</div>
                 <div class="buy-field">
                     <label>NAME</label>
                     <input id="buyName" type="text" autocomplete="name" maxlength="120" placeholder="Your name">
@@ -1070,13 +1071,17 @@
                     <label>EMAIL</label>
                     <input id="buyEmail" type="email" autocomplete="email" maxlength="160" placeholder="you@example.com">
                 </div>
+                <div class="buy-field">
+                    <label>MOBILE NUMBER</label>
+                    <input id="buyPhone" type="tel" inputmode="numeric" autocomplete="tel" maxlength="10" placeholder="10-digit mobile number">
+                </div>
                 <div class="buy-error" id="buyError1"></div>
                 <button class="buy-primary" id="buyContinue1" type="button">CONTINUE</button>
             </section>
 
             <section class="buy-step" id="buyStep2" hidden>
                 <div class="buy-step-title">CHOOSE PACKAGE</div>
-                <div class="buy-step-note">Choose the package you want. The amount shown here is the amount that will be locked into the Razorpay QR.</div>
+                <div class="buy-step-note">Choose the package you want. The selected amount will be securely processed through Cashfree Payments.</div>
                 <div class="buy-plans" id="buyPlanOptions"></div>
                 <div class="buy-error" id="buyError2"></div>
                 <button class="buy-primary" id="buyContinue2" type="button">CONTINUE TO PAYMENT</button>
@@ -1085,18 +1090,18 @@
             </section>
 
             <section class="buy-step" id="buyStep3" hidden>
-                <div class="buy-step-title">SCAN &amp; PAY</div>
+                <div class="buy-step-title">SECURE CHECKOUT</div>
                 <div class="buy-summary">
                     <div class="buy-summary-row"><span>Product</span><strong id="buyQrProduct">—</strong></div>
                     <div class="buy-summary-row"><span>Package</span><strong id="buyQrPackage">—</strong></div>
                     <div class="buy-summary-row"><span>Email</span><strong id="buyQrEmail">—</strong></div>
                 </div>
                 <div class="buy-amount" id="buyQrAmount">₹0</div>
-                <div class="buy-status" id="buyQrStatus">Creating Razorpay QR...</div>
-                <div class="buy-qr-wrap" id="buyQrWrap">
+                <div class="buy-status" id="buyQrStatus">Preparing Cashfree Checkout...</div>
+                <div class="buy-qr-wrap" id="buyQrWrap" style="display:none">
                     <div class="qr-card">
                         <div class="qr-crop">
-                            <img id="buyQrImage" alt="Razorpay payment QR">
+                            <img id="buyQrImage" alt="Cashfree payment">
                         </div>
                         <div class="qr-product" id="qrProductName">GMC</div>
                         <div class="qr-package" id="qrPackageName">Package</div>
@@ -1109,7 +1114,7 @@
                         </div>
                     </div>
                 </div>
-                <a class="buy-qr-link" id="buyQrLink" href="#" target="_blank" rel="noopener noreferrer" hidden>OPEN QR</a>
+                <a class="buy-qr-link" id="buyQrLink" href="#" target="_blank" rel="noopener noreferrer" hidden>OPEN PAYMENT</a>
                 <div class="buy-success" id="buySuccess" hidden>PAYMENT RECEIVED ✓<br><span id="buyEmailDeliveryStatus" style="display:block;margin-top:8px;font-size:12px;font-weight:600;color:#aaa;">Your order details and download link are being sent to your email.</span></div>
                 <div class="buy-error" id="buyError3"></div>
                 <button class="buy-secondary" id="buyCloseAfter" type="button">CLOSE</button>
@@ -1233,10 +1238,10 @@
     }
 
 
-    // ================= BUY / RAZORPAY FLOW =================
+    // ================= BUY / CASHFREE FLOW =================
     let buyProducts = [];
     let buyCurrentProduct = null;
-    let buyCustomer = { name: "", email: "" };
+    let buyCustomer = { name: "", email: "", phone: "" };
     let buySelectedPlanIndex = -1;
     let buyPurchaseId = "";
     let buyPollTimer = null;
@@ -1247,6 +1252,7 @@
     const buyStep3 = document.getElementById("buyStep3");
     const buyName = document.getElementById("buyName");
     const buyEmail = document.getElementById("buyEmail");
+    const buyPhone = document.getElementById("buyPhone");
     const buyPlanOptions = document.getElementById("buyPlanOptions");
     const buyError1 = document.getElementById("buyError1");
     const buyError2 = document.getElementById("buyError2");
@@ -1297,6 +1303,7 @@
         clearBuyErrors();
         buyName.value = "";
         buyEmail.value = "";
+        buyPhone.value = "";
         buyPlanOptions.innerHTML = "";
         buyQrProduct.textContent = "—";
         buyQrPackage.textContent = "—";
@@ -1325,6 +1332,7 @@
             const response = await fetch("/api/config", { cache: "no-store" });
             const cfg = await response.json().catch(() => ({}));
             buyTestPayment.hidden = cfg.test_payment_enabled !== true;
+            window.gmcCashfreeMode = cfg.cashfree_mode || "production";
         } catch {
             buyTestPayment.hidden = true;
         }
@@ -1398,6 +1406,7 @@
     buyContinue1.addEventListener("click", () => {
         const name = buyName.value.trim();
         const email = buyEmail.value.trim().toLowerCase();
+        const phone = buyPhone.value.replace(/\D/g, "");
 
         if (name.length < 2) {
             buyError1.textContent = "Please enter your name.";
@@ -1407,8 +1416,12 @@
             buyError1.textContent = "Please enter a valid email address.";
             return;
         }
+        if (!/^[6-9]\d{9}$/.test(phone)) {
+            buyError1.textContent = "Please enter a valid 10-digit Indian mobile number.";
+            return;
+        }
 
-        buyCustomer = { name, email };
+        buyCustomer = { name, email, phone };
         buyError1.textContent = "";
         buySelectedPlanIndex = -1;
         renderBuyPlans();
@@ -1420,12 +1433,11 @@
         showBuyStep(1);
     });
 
-    async function createRazorpayQr() {
+    async function createCashfreePayment() {
         if (!buyCurrentProduct || buySelectedPlanIndex < 0) {
             buyError2.textContent = "Please select a package.";
             return;
         }
-
         const selectedPlan = (buyCurrentProduct.plans || [])[buySelectedPlanIndex];
         if (!selectedPlan) {
             buyError2.textContent = "Selected package is not available.";
@@ -1437,16 +1449,13 @@
             : mode === "userpass"
                 ? (Array.isArray(selectedPlan.accounts) ? selectedPlan.accounts.length : 0)
                 : 0;
-
         if (mode !== "off" && available < 1) {
             buyError2.textContent = "This plan is currently out of stock.";
             return;
         }
-
         buyError2.textContent = "";
         buyContinue2.disabled = true;
-        buyContinue2.textContent = "CREATING QR...";
-
+        buyContinue2.textContent = "PREPARING CHECKOUT...";
         try {
             const response = await fetch("/api/payment/qr", {
                 method: "POST",
@@ -1456,49 +1465,42 @@
                     productId: buyCurrentProduct.id,
                     planIndex: buySelectedPlanIndex,
                     name: buyCustomer.name,
-                    email: buyCustomer.email
+                    email: buyCustomer.email,
+                    phone: buyCustomer.phone
                 })
             });
-
             const data = await response.json().catch(() => ({ message: "Server returned an invalid response." }));
-
-            if (!response.ok || !data.ok) {
-                throw new Error(data.message || `Payment server error (${response.status}).`);
-            }
-
-            // Do not open Step 3 until the server has actually created a QR.
-            if (!data.qrImageUrl || !data.purchaseId || !Number(data.amount)) {
-                throw new Error("Razorpay QR was not created correctly.");
-            }
-
+            if (!response.ok || !data.ok) throw new Error(data.message || `Payment server error (${response.status}).`);
+            if (!data.paymentSessionId || !data.purchaseId || !Number(data.amount)) throw new Error("Cashfree checkout was not created correctly.");
             buyPurchaseId = data.purchaseId;
             buyQrProduct.textContent = data.productName || buyCurrentProduct.name || "—";
             buyQrPackage.textContent = data.planLabel || selectedPlan.label || "—";
             buyQrEmail.textContent = data.customerEmail || buyCustomer.email || "—";
             buyQrAmount.textContent = `₹${Number(data.amount).toLocaleString("en-IN")}`;
-            qrProductName.textContent = data.productName || buyCurrentProduct.name || "GMC";
-            qrPackageName.textContent = data.planLabel || selectedPlan.label || "Package";
-            qrPackagePrice.textContent = `₹${Number(data.amount).toLocaleString("en-IN")}`;
-            buyQrStatus.textContent = "Scan the QR with any supported UPI app.";
-            // Use the server-side QR detector so only the actual QR is shown.
-            buyQrImage.src = data.qrImageUrl;
-            buyQrLink.href = data.qrImageUrl;
-            buyQrLink.hidden = false;
+            buyQrStatus.textContent = "Opening secure Cashfree checkout...";
             buySuccess.hidden = true;
-            buyQrWrap.style.display = "flex";
-
+            buyQrWrap.style.display = "none";
+            buyQrLink.hidden = true;
             showBuyStep(3);
+            const cashfree = Cashfree({ mode: data.cashfreeMode || window.gmcCashfreeMode || "production" });
+            const result = await cashfree.checkout({ paymentSessionId: data.paymentSessionId, redirectTarget: "_modal" });
+            if (result?.error) {
+                buyQrStatus.textContent = result.error.message || "Cashfree checkout could not be opened.";
+                return;
+            }
+            buyQrStatus.textContent = "Complete the payment in the Cashfree window. We are checking the payment status automatically.";
             startBuyPolling();
         } catch (error) {
-            console.error("BUY PAYMENT ERROR:", error);
-            buyError2.textContent = error.message || "Unable to create Razorpay QR.";
+            console.error("CASHFREE PAYMENT ERROR:", error);
+            buyError2.textContent = error.message || "Unable to create Cashfree payment.";
+            showBuyStep(2);
         } finally {
             buyContinue2.disabled = false;
             buyContinue2.textContent = "CONTINUE TO PAYMENT";
         }
     }
 
-    buyContinue2.addEventListener("click", createRazorpayQr);
+    buyContinue2.addEventListener("click", createCashfreePayment);
 
     async function createTestPayment() {
         if (!buyCurrentProduct || buySelectedPlanIndex < 0) {
@@ -1593,13 +1595,13 @@
 
             if (data.status === "expired") {
                 stopBuyPolling();
-                buyQrStatus.textContent = "This QR has expired. Close and start a new payment.";
+                buyQrStatus.textContent = "This payment session has expired. Close and start a new payment.";
                 buyQrWrap.style.display = "none";
                 buyQrLink.hidden = true;
                 return;
             }
 
-            buyQrStatus.textContent = "Waiting for payment...";
+            buyQrStatus.textContent = "Waiting for Cashfree payment...";
         } catch (error) {
             console.error("PAYMENT STATUS ERROR:", error);
         }

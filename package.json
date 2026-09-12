@@ -8,8 +8,6 @@
   "dependencies": {
     "express": "^5.1.0",
     "firebase-admin": "^13.0.2",
-    "dotenv": "^17.2.2",
-    "sharp": "^0.34.3",
-    "jsqr": "^1.4.0"
+    "dotenv": "^17.2.2"
   }
 }
