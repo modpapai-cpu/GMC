@@ -211,7 +211,7 @@ const CASHFREE_CLIENT_ID = process.env.CASHFREE_CLIENT_ID || process.env.CASHFRE
 const CASHFREE_CLIENT_SECRET = process.env.CASHFREE_CLIENT_SECRET || process.env.CASHFREE_SECRET_KEY || "";
 const CASHFREE_ENV = String(process.env.CASHFREE_ENV || "PRODUCTION").toUpperCase() === "SANDBOX" ? "SANDBOX" : "PRODUCTION";
 const CASHFREE_API_VERSION = "2025-01-01";
-const CASHFREE_ORDER_TTL_SECONDS = Math.max(300, Number(process.env.CASHFREE_ORDER_TTL_SECONDS || 900));
+const CASHFREE_ORDER_TTL_SECONDS = Math.max(16 * 60, Math.min(Number(process.env.CASHFREE_ORDER_TTL_SECONDS || 1800), 29 * 24 * 60 * 60));
 const PUBLIC_BASE_URL = String(process.env.PUBLIC_BASE_URL || "https://gmc-xduf.onrender.com").trim().replace(/\/$/, "");
 
 function getPublicBaseUrl(req) {
@@ -665,7 +665,7 @@ function parseCookies(req) {
     return result;
 }
 
-async function getSession(req) {
+async function getSession(req, res, touch = true) {
     const token = parseCookies(req).gmc_admin_session;
     if (!token) return null;
 
@@ -678,12 +678,27 @@ async function getSession(req) {
         return null;
     }
 
+    // Sliding inactivity timeout: every authenticated request/activity heartbeat
+    // keeps the session alive for another 15 minutes. No request for 15 minutes
+    // means the session expires and the admin must log in again.
+    if (touch) {
+        const expiresAt = Date.now() + SESSION_TTL;
+        await snapshot.ref.update({ expiresAt, lastActivityAt: adminSdk.firestore.FieldValue.serverTimestamp() });
+        const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
+        res?.setHeader(
+            "Set-Cookie",
+            `gmc_admin_session=${token}; Max-Age=900; Path=/; HttpOnly; SameSite=Lax${secure}`
+        );
+        res?.setHeader("X-Session-Expires-At", String(expiresAt));
+        return { token, ...data, expiresAt };
+    }
+
     return { token, ...data };
 }
 
 async function requireAdmin(req, res, next) {
     try {
-        const session = await getSession(req);
+        const session = await getSession(req, res);
         if (!session) return res.status(401).json({ message: "Admin session expired. Please login again." });
         req.adminSession = session;
         next();
@@ -695,7 +710,7 @@ async function requireAdmin(req, res, next) {
 
 async function requireSuperAdmin(req, res, next) {
     try {
-        const session = await getSession(req);
+        const session = await getSession(req, res);
         if (!session) return res.status(401).json({ message: "Admin session expired. Please login again." });
         if (session.role !== "super") return res.status(403).json({ message: "Super Admin access required." });
         req.adminSession = session;
@@ -714,7 +729,7 @@ async function clearSession(res, req) {
 
 app.get("/api/admin-status", async (req, res) => {
     try {
-        const session = await getSession(req);
+        const session = await getSession(req, res);
         res.json({
             authenticated: !!session,
             expiresAt: session ? session.expiresAt : 0,
