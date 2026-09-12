@@ -976,17 +976,27 @@
     
 
 /* ================= CASHFREE PAYMENT-ONLY VIEW ================= */
+/* The GMC overlay is the only outer scroll container. The Cashfree iframe
+   keeps its own fixed checkout viewport and is never vertically cropped by
+   flex-centering when the checkout is taller than the device viewport. */
 .buy-modal.payment-only {
-    padding: 0;
-    align-items: center;
+    padding: 18px 8px;
+    align-items: flex-start;
     justify-content: center;
     background: rgba(0,0,0,.78);
-    overflow: auto;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    box-sizing: border-box;
 }
 .buy-modal.payment-only .buy-modal-box {
     width: min(425px, calc(100vw - 16px));
     max-width: 425px;
+    height: auto;
+    min-height: 800px;
     max-height: none;
+    flex: 0 0 auto;
+    margin: 0 auto 18px;
     overflow: visible;
     background: transparent;
     border: 0;
@@ -1032,9 +1042,14 @@
     overflow: hidden !important;
 }
 @media (max-width:600px) {
+    .buy-modal.payment-only {
+        padding: 10px 4px 18px;
+    }
     .buy-modal.payment-only .buy-modal-box {
-        width: calc(100vw - 16px);
-        max-width: calc(100vw - 16px);
+        width: calc(100vw - 8px);
+        max-width: calc(100vw - 8px);
+        min-height: 800px;
+        margin-bottom: 10px;
     }
     .buy-modal.payment-only .cashfree-inline-container,
     .buy-modal.payment-only .cashfree-inline-container iframe {
@@ -1584,6 +1599,7 @@
             if (!response.ok || !data.ok) throw new Error(data.message || `Payment server error (${response.status}).`);
             if (!data.paymentSessionId || !data.purchaseId || !Number(data.amount)) throw new Error("Cashfree checkout was not created correctly.");
             buyPurchaseId = data.purchaseId;
+            window.gmcCashfreeOrderId = data.orderId || "";
             buyQrProduct.textContent = data.productName || buyCurrentProduct.name || "—";
             buyQrPackage.textContent = data.planLabel || selectedPlan.label || "—";
             buyQrEmail.textContent = data.customerEmail || buyCustomer.email || "—";
@@ -1612,6 +1628,11 @@
                 showBuyStep(2);
                 buyQrStatus.textContent = result.error.message || "Cashfree checkout could not be opened.";
                 return;
+            }
+            if (result?.paymentDetails) {
+                // Cashfree signals completion here; verify server-side before showing success.
+                buyQrStatus.textContent = "Verifying payment...";
+                checkBuyPayment();
             }
             buyQrStatus.textContent = "Complete your payment below. Payment status will be verified automatically.";
             startBuyPolling();
@@ -1708,6 +1729,12 @@
 
             if (data.status === "paid") {
                 stopBuyPolling();
+                buyModal.classList.remove("payment-only");
+                showBuyStep(3);
+                if (cashfreeCheckoutContainer) {
+                    cashfreeCheckoutContainer.classList.remove("active");
+                    cashfreeCheckoutContainer.innerHTML = "";
+                }
                 buyQrStatus.textContent = "Payment verified successfully.";
                 const deliveryStatus = document.getElementById("buyEmailDeliveryStatus");
                 if (deliveryStatus) {
@@ -1741,6 +1768,16 @@
         checkBuyPayment();
         buyPollTimer = setInterval(checkBuyPayment, 3000);
     }
+
+    // Cashfree may navigate its inline iframe to our return URL after payment.
+    // Keep the parent GMC checkout in control and immediately re-check the order.
+    window.addEventListener("message", event => {
+        const data = event && event.data;
+        if (!data || data.type !== "GMC_CASHFREE_RETURN") return;
+        if (data.orderId && buyPurchaseId && String(data.orderId) !== String(buyPurchaseId) && String(data.orderId) !== String(window.gmcCashfreeOrderId || "")) return;
+        checkBuyPayment();
+        setTimeout(checkBuyPayment, 800);
+    });
 
     buyClose.addEventListener("click", closeBuyModal);
     buyCloseAfter.addEventListener("click", closeBuyModal);
