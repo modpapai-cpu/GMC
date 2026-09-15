@@ -1475,8 +1475,24 @@
         setTimeout(() => buyName.focus(), 50);
     }
 
+    async function cancelBuyPaymentOnClose() {
+        if (!buyPurchaseId) return;
+        try {
+            await fetch(`/api/payment/cancel/${encodeURIComponent(buyPurchaseId)}`, {
+                method: "POST",
+                cache: "no-store",
+                keepalive: true,
+                credentials: "same-origin"
+            });
+        } catch (error) {
+            console.warn("PAYMENT CLOSE CLEANUP FAILED:", error);
+        }
+    }
+
     function closeBuyModal() {
+        const shouldCancel = Boolean(buyPurchaseId) && buySuccess.hidden;
         stopBuyPolling();
+        if (shouldCancel) cancelBuyPaymentOnClose();
         buyModal.classList.add("hidden");
         buyModal.classList.remove("payment-only");
         buyModal.setAttribute("aria-hidden", "true");

@@ -879,7 +879,27 @@ app.get("/api/purchase-logs", async (req, res) => {
     }
     try {
         const snapshot = await db.collection(COLLECTIONS.purchases).get();
-        const logs = snapshot.docs
+        const stale = snapshot.docs.filter(doc => {
+            const p = doc.data() || {};
+            const status = String(p.status || "").toLowerCase().trim();
+            return ["pending", "user_dropped"].includes(status) && Number(p.expiresAt || 0) > 0 && Date.now() >= Number(p.expiresAt);
+        });
+        for (const doc of stale) {
+            const purchase = doc.data() || {};
+            try {
+                await releaseReservedInventory(purchase);
+                await doc.ref.update({
+                    status: "expired",
+                    paymentMessage: "Payment session expired.",
+                    paymentUpdatedAt: adminSdk.firestore.FieldValue.serverTimestamp(),
+                    reservedLicenseKey: null,
+                    reservedAccount: null
+                });
+            } catch (cleanupError) {
+                console.error("PURCHASE EXPIRY CLEANUP ERROR:", cleanupError);
+            }
+        }
+        const logs = (await db.collection(COLLECTIONS.purchases).get()).docs
             .map(doc => ({ id: doc.id, ...doc.data() }))
             // Show all customer-visible payment states. "creating" is an
             // internal pre-Cashfree state and is intentionally hidden.
@@ -1505,6 +1525,74 @@ app.post("/api/payment/qr", async (req, res) => {
             return res.status(502).json({ message: `Unable to create Cashfree payment: ${error.message || "Unknown error."}` });
         }
     } catch (error) { console.error("PAYMENT REQUEST FAILED:", error); return res.status(500).json({ message: error.message || "Unable to start payment." }); }
+});
+
+/* Cancel a customer payment attempt when the checkout window is closed.
+ * Do a server-side Cashfree status check first so a race with a successful
+ * payment cannot accidentally turn a paid order into a cancelled order.
+ */
+app.post("/api/payment/cancel/:purchaseId", async (req, res) => {
+    try {
+        const purchaseId = String(req.params.purchaseId || "").trim();
+        if (!purchaseId) return res.status(400).json({ message: "Purchase ID is required." });
+
+        const ref = db.collection(COLLECTIONS.purchases).doc(purchaseId);
+        const snapshot = await ref.get();
+        if (!snapshot.exists) return res.status(404).json({ message: "Payment session not found." });
+
+        const purchase = snapshot.data();
+        if (purchase.status === "paid") {
+            return res.json({ ok: true, status: "paid" });
+        }
+        if (purchase.status === "refund") {
+            return res.json({ ok: true, status: "refund" });
+        }
+
+        const orderId = String(purchase.cashfreeOrderId || "").trim();
+        if (orderId) {
+            const order = await cashfreeRequest(`/orders/${encodeURIComponent(orderId)}`, { method: "GET" });
+            if (String(order.order_status || "").toUpperCase() === "PAID") {
+                if (Math.round(Number(order.order_amount || 0) * 100) !== Number(purchase.amountPaise || 0)) {
+                    return res.status(400).json({ message: "Payment amount mismatch." });
+                }
+                const payments = await cashfreeRequest(`/orders/${encodeURIComponent(orderId)}/payments`, { method: "GET" }).catch(() => []);
+                const success = Array.isArray(payments)
+                    ? payments.find(p => String(p?.payment_status || "").toUpperCase() === "SUCCESS" && Math.round(Number(p?.payment_amount || 0) * 100) === Number(purchase.amountPaise || 0))
+                    : null;
+                await markCashfreePurchasePaid(purchaseId, success?.cf_payment_id || "", "cashfree_close_status_check");
+                return res.json({ ok: true, status: "paid" });
+            }
+        }
+
+        let shouldRelease = false;
+        let finalStatus = "cancelled";
+        await db.runTransaction(async tx => {
+            const freshSnap = await tx.get(ref);
+            if (!freshSnap.exists) throw new Error("Payment session not found.");
+            const fresh = freshSnap.data();
+            if (fresh.status === "paid" || fresh.status === "refund") {
+                finalStatus = fresh.status;
+                return;
+            }
+            if (Date.now() >= Number(fresh.expiresAt || 0)) {
+                finalStatus = "expired";
+            }
+            tx.update(ref, {
+                status: finalStatus,
+                paymentMessage: finalStatus === "expired" ? "Payment session expired." : "Customer closed the payment window.",
+                paymentUpdatedAt: adminSdk.firestore.FieldValue.serverTimestamp(),
+                reservedLicenseKey: null,
+                reservedAccount: null
+            });
+            shouldRelease = true;
+        });
+
+        if (shouldRelease) await releaseReservedInventory(purchase).catch(() => {});
+        return res.json({ ok: true, status: finalStatus });
+    } catch (error) {
+        console.error("CANCEL PAYMENT ERROR:", error);
+        return res.status(502).json({ message: `Unable to cancel payment: ${error.message || "Unknown error."}` });
+    }
 });
 
 app.get("/api/payment/qr/:purchaseId", async (req, res) => {
