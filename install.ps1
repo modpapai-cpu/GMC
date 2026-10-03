@@ -11,7 +11,7 @@ Write-Host ""
 # GMC WEBSITE / LICENSE API
 # Change this URL only if your GMC website domain changes.
 # =========================================================
-$GmcApiBase = "https://gmc-tau.vercel.app"
+$GmcApiBase = "https://gmc-xduf.onrender.com"
 
 # ADMIN CHECK
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
