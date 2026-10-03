@@ -1,13 +1,38 @@
 # GMC Vercel Deployment
 
-1. Upload this project to GitHub (do not upload `.env` or real API keys).
-2. In Vercel: Add New Project -> Import the GitHub repository.
-3. Framework Preset: Other. Build Command can be empty; the included `vercel.json` handles routing.
-4. Add the environment variables from `.env.example` in Vercel Project Settings -> Environment Variables.
-5. Redeploy.
+## 1. Deploy this folder as the Vercel project root
+Use the folder containing `package.json`, `server.js`, `api/`, `public/` and `vercel.json`.
 
-Important:
-- `PUBLIC_BASE_URL` must be the final HTTPS Vercel URL.
-- For Cashfree, configure the webhook/return URLs in Cashfree to use the Vercel HTTPS domain.
-- Keep Firebase, Cashfree, and Mailjet secrets only in Vercel Environment Variables.
-- The JSON files in `public/` are only seed data; the app persists data in Firestore.
+## 2. Required Vercel Environment Variables
+Set these in Vercel -> Project Settings -> Environment Variables:
+
+- `FIREBASE_PROJECT_ID`
+- `FIREBASE_CLIENT_EMAIL`
+- `FIREBASE_PRIVATE_KEY`
+
+Or set the single variable:
+
+- `FIREBASE_SERVICE_ACCOUNT_JSON`
+
+If using Mailjet/contact email features, keep the existing Mailjet variables from your current deployment as well.
+
+## 3. Important API test
+After deployment open:
+
+`https://YOUR-DOMAIN/api/plugin-license/verify?key=GMC-TEST`
+
+A working deployment should return JSON similar to:
+
+`{"valid":false,"message":"License key not found."}`
+
+A **404 HTML page is not expected**.
+
+## 4. Admin Plugin License Manager
+Open the admin dashboard after logging in. The Plugin License Manager is below Reseller Manager.
+
+## 5. PowerShell installer
+The included `install.ps1` is configured for:
+
+`https://gmc-tau.vercel.app`
+
+If the production domain changes, update `$GmcApiBase` in `install.ps1`.
