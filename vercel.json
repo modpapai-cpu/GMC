@@ -1,6 +1,21 @@
 {
   "version": 2,
+  "functions": {
+    "api/index.js": {
+      "maxDuration": 60
+    },
+    "api/[...path].js": {
+      "maxDuration": 60
+    }
+  },
   "rewrites": [
-    { "source": "/", "destination": "/first.html" }
+    {
+      "source": "/api/:path*",
+      "destination": "/api/index.js"
+    },
+    {
+      "source": "/",
+      "destination": "/first.html"
+    }
   ]
 }
