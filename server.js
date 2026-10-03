@@ -84,9 +84,19 @@ const COLLECTIONS = {
     purchases: "purchases",
     resellers: "resellers",
     resellerSessions: "reseller_sessions",
-    plugins: "plugins",
     pluginLicenses: "plugin_licenses"
 };
+
+const GMC_PLUGIN_CATALOG = [
+    { name: "GMCQUESTCOMPLEATER", pathType: "plugin", fileId: "1czyMxhKM_55FUhxvRvUUk-x8Vj4d3POz" },
+    { name: "FakeDeafen", pathType: "userplugin", fileId: "1U3MCO7rWoB-zCFw_p-VPqPtTc-kGnwrA" },
+    { name: "voiceChatUtilities", pathType: "userplugin", fileId: "1oqe3nYA85-213T720DHDUJnKnw40rdDl" },
+    { name: "followUser", pathType: "userplugin", fileId: "1mYKd4HSNoz67ZUgKJbycgkxCQx6VVxzP" },
+    { name: "QUEST26", pathType: "userplugin", fileId: "1fHLeU-E0brTDBSpCvq-icwFXdPPVh6CK" },
+    { name: "QuestAutoComplete", pathType: "userplugin", fileId: "1czyMxhKM_55FUhxvRvUUk-x8Vj4d3POz" }
+];
+function pluginDownloadUrl(fileId) { return `https://drive.google.com/uc?export=download&id=${encodeURIComponent(fileId)}`; }
+function generatePluginLicenseKey() { const part = () => crypto.randomBytes(3).toString("hex").toUpperCase(); return `GMC-${part()}-${part()}-${part()}-${part()}`; }
 
 function cleanEmail(value) {
     return String(value || "").trim().toLowerCase();
@@ -143,78 +153,6 @@ async function seedFromJsonFiles() {
             console.error(`SEED ERROR (${fileName}):`, error.message);
         }
     }
-}
-
-
-const DEFAULT_PLUGINS = [
-    { id: "GMCQUESTCOMPLEATER", name: "GMCQUESTCOMPLEATER", enabled: true, pathType: "plugin", driveId: "1czyMxhKM_55FUhxvRvUUk-x8Vj4d3POz" },
-    { id: "FakeDeafen", name: "FakeDeafen", enabled: true, pathType: "userplugin", driveId: "1U3MCO7rWoB-zCFw_p-VPqPtTc-kGnwrA" },
-    { id: "voiceChatUtilities", name: "voiceChatUtilities", enabled: true, pathType: "userplugin", driveId: "1oqe3nYA85-213T720DHDUJnKnw40rdDl" },
-    { id: "followUser", name: "followUser", enabled: true, pathType: "userplugin", driveId: "1mYKd4HSNoz67ZUgKJbycgkxCQx6VVxzP" },
-    { id: "QUEST26", name: "QUEST26", enabled: true, pathType: "userplugin", driveId: "1fHLeU-E0brTDBSpCvq-icwFXdPPVh6CK" },
-    { id: "QuestAutoComplete", name: "QuestAutoComplete", enabled: true, pathType: "userplugin", driveId: "1czyMxhKM_55FUhxvRvUUk-x8Vj4d3POz" }
-];
-
-async function seedDefaultPlugins() {
-    const snap = await db.collection(COLLECTIONS.plugins).limit(1).get();
-    if (!snap.empty) return;
-    const batch = db.batch();
-    for (const plugin of DEFAULT_PLUGINS) batch.set(db.collection(COLLECTIONS.plugins).doc(plugin.id), plugin);
-    await batch.commit();
-    console.log(`Seeded ${DEFAULT_PLUGINS.length} plugins into Firestore/${COLLECTIONS.plugins}`);
-}
-
-function generatePluginLicenseKey() {
-    const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-    const part = () => Array.from({ length: 4 }, () => alphabet[crypto.randomInt(0, alphabet.length)]).join("");
-    return `GMC-${part()}-${part()}-${part()}-${part()}`;
-}
-
-function pluginLicenseExpiry(validityDays) {
-    const days = Number(validityDays);
-    if (!Number.isFinite(days) || days <= 0) return null;
-    return new Date(Date.now() + Math.round(days) * 86400000).toISOString();
-}
-
-async function createPluginLicense({ pluginIds, validityDays, createdByType, createdById, productId, planIndex, resellerId, customerName, customerEmail }) {
-    const ids = [...new Set((Array.isArray(pluginIds) ? pluginIds : []).map(x => String(x).trim()).filter(Boolean))];
-    if (!ids.length) throw new Error("No plugins are assigned to this license package.");
-    const pluginSnap = await db.collection(COLLECTIONS.plugins).get();
-    const pluginMap = new Map(pluginSnap.docs.map(d => [d.id, { id: d.id, ...d.data() }]));
-    const plugins = ids.map(id => pluginMap.get(id)).filter(Boolean).filter(p => p.enabled !== false);
-    if (!plugins.length) throw new Error("All selected plugins are disabled or unavailable.");
-    const key = generatePluginLicenseKey();
-    const expiresAt = pluginLicenseExpiry(validityDays);
-    const ref = db.collection(COLLECTIONS.pluginLicenses).doc(key);
-    const data = {
-        key,
-        pluginIds: plugins.map(p => p.id),
-        plugins: plugins.map(p => ({ id: p.id, name: p.name, driveId: p.driveId, pathType: p.pathType || "userplugin" })),
-        validityDays: Number(validityDays) || 0,
-        createdAt: adminSdk.firestore.FieldValue.serverTimestamp(),
-        expiresAt,
-        status: "active",
-        createdByType: createdByType || "system",
-        createdById: createdById || null,
-        productId: productId || null,
-        planIndex: Number.isInteger(planIndex) ? planIndex : null,
-        resellerId: resellerId || null,
-        customerName: customerName || null,
-        customerEmail: customerEmail || null
-    };
-    await ref.set(data);
-    return { id: ref.id, ...data, createdAt: new Date().toISOString() };
-}
-
-async function getPluginLicense(key) {
-    const clean = String(key || "").trim().toUpperCase();
-    if (!clean) return null;
-    const snap = await db.collection(COLLECTIONS.pluginLicenses).doc(clean).get();
-    if (!snap.exists) return null;
-    const data = { id: snap.id, ...snap.data() };
-    if (data.status !== "active") return { ...data, valid: false, reason: "License is disabled." };
-    if (data.expiresAt && Date.now() >= new Date(data.expiresAt).getTime()) return { ...data, valid: false, reason: "License expired." };
-    return { ...data, valid: true };
 }
 
 async function loadProducts() {
@@ -1244,98 +1182,48 @@ app.delete("/api/resellers/:id", requireAdmin, async (req, res) => {
     }
 });
 
-
-/* Plugin manager + public license verification */
-app.get("/api/plugins", requireAdmin, async (req, res) => {
-    try {
-        await seedDefaultPlugins();
-        const plugins = await loadCollection(COLLECTIONS.plugins);
-        plugins.sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id)));
-        res.json(plugins);
-    } catch (error) {
-        console.error("PLUGIN LIST ERROR:", error);
-        res.status(500).json({ message: "Unable to load plugins." });
-    }
+/* GMC Plugin License Manager */
+app.get("/api/plugin-license/plugins", requireAdmin, async (req, res) => {
+    res.json({ plugins: GMC_PLUGIN_CATALOG.map(p => ({ name: p.name, pathType: p.pathType })) });
 });
-
-app.put("/api/plugins/:id", requireAdmin, async (req, res) => {
-    try {
-        const ref = db.collection(COLLECTIONS.plugins).doc(String(req.params.id));
-        const snap = await ref.get();
-        if (!snap.exists) return res.status(404).json({ message: "Plugin not found." });
-        const old = snap.data();
-        const updated = {
-            ...old,
-            name: String(req.body?.name ?? old.name ?? ref.id).trim().slice(0, 120),
-            driveId: String(req.body?.driveId ?? old.driveId ?? "").trim(),
-            pathType: req.body?.pathType === "plugin" ? "plugin" : "userplugin",
-            enabled: req.body?.enabled !== false,
-            updatedAt: adminSdk.firestore.FieldValue.serverTimestamp()
-        };
-        if (!updated.driveId) return res.status(400).json({ message: "Google Drive file ID is required." });
-        await ref.set(updated);
-        res.json({ id: ref.id, ...updated });
-    } catch (error) {
-        console.error("PLUGIN UPDATE ERROR:", error);
-        res.status(500).json({ message: "Unable to update plugin." });
-    }
+app.get("/api/plugin-license/keys", requireAdmin, async (req, res) => {
+    try { const snap = await db.collection(COLLECTIONS.pluginLicenses).orderBy("createdAt", "desc").limit(200).get(); res.json({ keys: snap.docs.map(doc => ({ id: doc.id, ...doc.data() })) }); }
+    catch (error) { console.error("PLUGIN LICENSE LIST ERROR:", error); res.status(500).json({ message: "Unable to load plugin licenses." }); }
 });
-
+app.post("/api/plugin-license/generate", requireAdmin, async (req, res) => {
+    try {
+        const requested = Array.isArray(req.body?.plugins) ? req.body.plugins.map(String) : [];
+        const selected = GMC_PLUGIN_CATALOG.filter(p => requested.includes(p.name));
+        if (!selected.length) return res.status(400).json({ message: "Select at least one plugin." });
+        const days = Number(req.body?.validityDays);
+        if (!Number.isFinite(days) || days < 0 || days > 3650) return res.status(400).json({ message: "Validity must be between 0 and 3650 days. Use 0 for lifetime." });
+        let key = generatePluginLicenseKey();
+        while ((await db.collection(COLLECTIONS.pluginLicenses).doc(key).get()).exists) key = generatePluginLicenseKey();
+        const createdAt = new Date().toISOString();
+        const expiresAt = days === 0 ? null : new Date(Date.now() + Math.floor(days) * 86400000).toISOString();
+        const record = { key, plugins: selected.map(p => ({ name: p.name, pathType: p.pathType, downloadUrl: pluginDownloadUrl(p.fileId) })), validityDays: Math.floor(days), createdAt, expiresAt, status: "active", createdBy: cleanEmail(req.adminSession.email || ADMIN_EMAIL) };
+        await db.collection(COLLECTIONS.pluginLicenses).doc(key).set(record);
+        res.status(201).json(record);
+    } catch (error) { console.error("PLUGIN LICENSE GENERATE ERROR:", error); res.status(500).json({ message: "Unable to generate plugin license." }); }
+});
+app.patch("/api/plugin-license/:key", requireAdmin, async (req, res) => {
+    try {
+        const key = String(req.params.key || "").trim().toUpperCase(), status = String(req.body?.status || "").toLowerCase();
+        const ref = db.collection(COLLECTIONS.pluginLicenses).doc(key), snap = await ref.get();
+        if (!snap.exists) return res.status(404).json({ message: "License not found." });
+        if (!["active", "revoked"].includes(status)) return res.status(400).json({ message: "Invalid status." });
+        await ref.update({ status, updatedAt: new Date().toISOString(), updatedBy: cleanEmail(req.adminSession.email || ADMIN_EMAIL) }); res.json({ ok: true, status });
+    } catch (error) { console.error("PLUGIN LICENSE STATUS ERROR:", error); res.status(500).json({ message: "Unable to update license status." }); }
+});
 app.get("/api/plugin-license/verify", async (req, res) => {
     try {
-        await seedDefaultPlugins();
-        const license = await getPluginLicense(req.query?.key);
-        if (!license || license.valid === false) return res.status(404).json({ valid: false, message: license?.reason || "Invalid license key." });
-        const plugins = (Array.isArray(license.plugins) ? license.plugins : []).map(p => ({
-            id: p.id,
-            name: p.name,
-            pathType: p.pathType || "userplugin",
-            downloadUrl: `https://drive.google.com/uc?export=download&id=${encodeURIComponent(p.driveId || "")}`
-        }));
-        res.json({ valid: true, key: license.key, expiresAt: license.expiresAt, validityDays: license.validityDays, plugins });
-    } catch (error) {
-        console.error("PLUGIN LICENSE VERIFY ERROR:", error);
-        res.status(500).json({ valid: false, message: "Unable to verify license." });
-    }
-});
-
-app.post("/api/plugin-licenses/admin-generate", requireAdmin, async (req, res) => {
-    try {
-        await seedDefaultPlugins();
-        const pluginIds = Array.isArray(req.body?.pluginIds) ? req.body.pluginIds : [];
-        const validityDays = Number(req.body?.validityDays || 0);
-        const license = await createPluginLicense({ pluginIds, validityDays, createdByType: "admin", createdById: req.adminSession.email || null, productId: null, planIndex: null, resellerId: null, customerName: null, customerEmail: null });
-        res.json({ ok: true, licenseKey: license.key, expiresAt: license.expiresAt, plugins: license.plugins, validityDays: license.validityDays });
-    } catch (error) {
-        console.error("ADMIN PLUGIN LICENSE GENERATE ERROR:", error);
-        res.status(400).json({ message: error.message || "Unable to generate plugin license." });
-    }
-});
-
-app.post("/api/plugin-licenses/generate", async (req, res) => {
-    try {
-        await seedDefaultPlugins();
-        const session = await getResellerSession(req);
-        if (!session) return res.status(401).json({ message: "Reseller login is required." });
-        const reseller = await getDocument(COLLECTIONS.resellers, session.resellerId);
-        if (!reseller || reseller.active === false) return res.status(403).json({ message: "Reseller access is disabled." });
-        if (reseller.bypassPayment !== true) return res.status(403).json({ message: "License generation is not enabled for this reseller." });
-        const productId = String(req.body?.productId || "").trim();
-        const planIndex = Number(req.body?.planIndex);
-        const customerName = String(req.body?.name || "").trim().slice(0, 120);
-        const customerEmail = cleanEmail(req.body?.email);
-        if (!productId || !Number.isInteger(planIndex) || planIndex < 0) return res.status(400).json({ message: "Invalid product or package." });
-        if (!resellerCanBuyProduct(reseller, productId)) return res.status(403).json({ message: "This product is not assigned to your reseller account." });
-        const product = await getDocument(COLLECTIONS.products, productId);
-        if (!product || product.pluginLicense !== true) return res.status(400).json({ message: "This product is not a plugin license product." });
-        const plan = Array.isArray(product.plans) ? product.plans[planIndex] : null;
-        if (!plan || plan.pluginLicense !== true) return res.status(400).json({ message: "Selected package is not a plugin license package." });
-        const license = await createPluginLicense({ pluginIds: plan.pluginIds, validityDays: plan.validityDays, createdByType: "reseller", createdById: reseller.id, productId, planIndex, resellerId: reseller.id, customerName, customerEmail });
-        res.json({ ok: true, licenseKey: license.key, expiresAt: license.expiresAt, plugins: license.plugins, validityDays: license.validityDays });
-    } catch (error) {
-        console.error("PLUGIN LICENSE GENERATE ERROR:", error);
-        res.status(400).json({ message: error.message || "Unable to generate plugin license." });
-    }
+        const key = String(req.query?.key || "").trim().toUpperCase(); if (!key) return res.json({ valid: false, message: "License key is required." });
+        const snap = await db.collection(COLLECTIONS.pluginLicenses).doc(key).get(); if (!snap.exists) return res.json({ valid: false, message: "License key not found." });
+        const license = snap.data() || {}; if (String(license.status || "active").toLowerCase() !== "active") return res.json({ valid: false, message: "License has been revoked." });
+        if (license.expiresAt && Date.now() >= new Date(license.expiresAt).getTime()) return res.json({ valid: false, message: "License has expired.", expiresAt: license.expiresAt });
+        const plugins = Array.isArray(license.plugins) ? license.plugins : []; if (!plugins.length) return res.json({ valid: false, message: "No plugins assigned to this license." });
+        res.json({ valid: true, key, expiresAt: license.expiresAt || null, plugins });
+    } catch (error) { console.error("PLUGIN LICENSE VERIFY ERROR:", error); res.status(500).json({ valid: false, message: "License verification service unavailable." }); }
 });
 
 /* Products */
@@ -1343,7 +1231,7 @@ app.get("/api/products", async (req, res) => {
     try {
         const products = await loadProducts();
         const resellerSession = await getResellerSession(req);
-        if (!resellerSession) return res.json(products.filter(p => p.pluginLicense !== true));
+        if (!resellerSession) return res.json(products);
         const reseller = await getDocument(COLLECTIONS.resellers, resellerSession.resellerId);
         if (!reseller || reseller.active === false) return res.json([]);
         const allowed = new Set((Array.isArray(reseller.productIds) ? reseller.productIds : []).map(String));
@@ -1351,7 +1239,7 @@ app.get("/api/products", async (req, res) => {
         const filtered = products.filter(p => allowed.has(String(p.id))).map(p => ({
             ...p,
             resellerDiscountPercent: discountPercent,
-            resellerShowBuy: p.pluginLicense === true ? reseller.bypassPayment === true : reseller.showBuy === true,
+            resellerShowBuy: reseller.showBuy === true,
             resellerBypassPayment: reseller.bypassPayment === true,
             plans: (Array.isArray(p.plans) ? p.plans : []).map(plan => {
                 const originalPaise = parsePlanAmount(plan.price);
@@ -1376,10 +1264,7 @@ function normalizeProductPlans(incomingPlans, oldPlans = []) {
         const licenses=Array.isArray(raw?.licenses)?raw.licenses.map(x=>String(x).trim()).filter(Boolean).slice(0,5000):(Array.isArray(old?.licenses)?old.licenses.map(x=>String(x).trim()).filter(Boolean).slice(0,5000):[]);
         const accounts=Array.isArray(raw?.accounts)?raw.accounts.map(x=>({username:String(x?.username||"").trim(),password:String(x?.password||"")})).filter(x=>x.username&&x.password).slice(0,5000):(Array.isArray(old?.accounts)?old.accounts.map(x=>({username:String(x?.username||"").trim(),password:String(x?.password||"")})).filter(x=>x.username&&x.password).slice(0,5000):[]);
         const credentialMode=["license","userpass","off"].includes(raw?.credentialMode)?raw.credentialMode:(old?.credentialMode||"license");
-        const pluginLicense = raw?.pluginLicense === true || old?.pluginLicense === true;
-        const pluginIds = [...new Set((Array.isArray(raw?.pluginIds) ? raw.pluginIds : (Array.isArray(old?.pluginIds) ? old.pluginIds : [])).map(x=>String(x).trim()).filter(Boolean))].slice(0,50);
-        const validityDays = Number.isFinite(Number(raw?.validityDays)) ? Math.max(0, Math.min(3650, Math.floor(Number(raw.validityDays)))) : Math.max(0, Math.min(3650, Number(old?.validityDays || 0)));
-        return {id:iid||String(old?.id||crypto.randomUUID()),label,price,licenses,accounts,credentialMode,pluginLicense,pluginIds,validityDays};
+        return {id:iid||String(old?.id||crypto.randomUUID()),label,price,licenses,accounts,credentialMode};
     }).filter(p=>p.label||p.price);
 }
 
@@ -1402,7 +1287,6 @@ app.post("/api/products", requireAdmin, async (req, res) => {
                 ? body.buttons.slice(0, 2)
                 : [{ text: String(body.buttonText || "GET PRODUCT"), link: String(body.buttonLink || "#") }],
             buyEnabled: Boolean(body.buyEnabled),
-            pluginLicense: body.pluginLicense === true,
             createdAt: new Date().toISOString(),
             order: Date.now()
         };
@@ -1464,8 +1348,7 @@ app.put("/api/products/:id", requireAdmin, async (req, res) => {
             buttons: Array.isArray(body.buttons) && body.buttons.length
                 ? body.buttons.slice(0, 2)
                 : (old.buttons || [{ text: "GET PRODUCT", link: "#" }]),
-            buyEnabled: typeof body.buyEnabled === "boolean" ? body.buyEnabled : Boolean(old.buyEnabled),
-            pluginLicense: typeof body.pluginLicense === "boolean" ? body.pluginLicense : old.pluginLicense === true
+            buyEnabled: typeof body.buyEnabled === "boolean" ? body.buyEnabled : Boolean(old.buyEnabled)
         };
 
         if (!updated.name) return res.status(400).json({ message: "Product name is required." });
@@ -1671,12 +1554,8 @@ app.post("/api/payment/reseller-bypass", async (req, res) => {
         if (!amountPaise) return res.status(400).json({ message: "Calculated reseller amount is invalid." });
 
         const purchaseRef = db.collection(COLLECTIONS.purchases).doc();
-        let reservedLicenseKey = "", reservedAccount = null, credentialMode = "license", pluginLicense = null;
-        if (product.pluginLicense === true && selectedPlan.pluginLicense === true) {
-            pluginLicense = await createPluginLicense({ pluginIds: selectedPlan.pluginIds, validityDays: selectedPlan.validityDays, createdByType: "reseller", createdById: reseller.id, productId, planIndex, resellerId: reseller.id, customerName, customerEmail });
-            reservedLicenseKey = pluginLicense.key;
-        }
-        if (!pluginLicense) await db.runTransaction(async tx => {
+        let reservedLicenseKey = "", reservedAccount = null, credentialMode = "license";
+        await db.runTransaction(async tx => {
             const pref = db.collection(COLLECTIONS.products).doc(productId);
             const snap = await tx.get(pref);
             if (!snap.exists) throw new Error("Product not found.");
@@ -1695,6 +1574,7 @@ app.post("/api/payment/reseller-bypass", async (req, res) => {
             }
             tx.update(pref, { plans: pp });
         });
+
         const purchase = {
             productId, productName: String(product.name || ""), planIndex,
             planLabel: String(selectedPlan.label || `Package ${planIndex + 1}`),
@@ -1704,10 +1584,6 @@ app.post("/api/payment/reseller-bypass", async (req, res) => {
             customerName, customerEmail, customerPhone,
             reservedLicenseKey, reservedAccount, credentialMode,
             downloadUrl: String(product.downloadUrl || "").trim(),
-            pluginLicense: pluginLicense ? true : false,
-            pluginLicenseExpiresAt: pluginLicense?.expiresAt || null,
-            pluginIds: pluginLicense?.pluginIds || null,
-            licenseKey: pluginLicense ? pluginLicense.key : null,
             status: "paid", paymentId: `RESELLER_BYPASS_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`,
             paymentMethod: "reseller_bypass", bypassPayment: true,
             paidAt: adminSdk.firestore.FieldValue.serverTimestamp(),
@@ -1719,7 +1595,7 @@ app.post("/api/payment/reseller-bypass", async (req, res) => {
             const delivery = await deliverPurchaseEmail(purchaseRef.id);
             emailStatus = delivery.sent || delivery.alreadySent ? "sent" : (delivery.claimedByOther ? "sending" : "pending");
         } catch (mailError) { console.error("RESELLER BYPASS DELIVERY ERROR:", mailError); emailStatus = "failed"; }
-        return res.json({ ok: true, bypassPayment: true, status: "paid", purchaseId: purchaseRef.id, amount: amountPaise / 100, productName: String(product.name || ""), planLabel: String(selectedPlan.label || ""), licenseKey: pluginLicense ? pluginLicense.key : (credentialMode === "license" ? reservedLicenseKey : null), pluginLicenseExpiresAt: pluginLicense?.expiresAt || null, pluginLicense: !!pluginLicense, account: credentialMode === "userpass" ? reservedAccount : null, emailStatus, downloadUrl: String(product.downloadUrl || "").trim() || null });
+        return res.json({ ok: true, bypassPayment: true, status: "paid", purchaseId: purchaseRef.id, amount: amountPaise / 100, productName: String(product.name || ""), planLabel: String(selectedPlan.label || ""), licenseKey: credentialMode === "license" ? reservedLicenseKey : null, account: credentialMode === "userpass" ? reservedAccount : null, emailStatus, downloadUrl: String(product.downloadUrl || "").trim() || null });
     } catch (error) {
         console.error("RESELLER BYPASS FAILED:", error);
         return res.status(400).json({ message: error.message || "Unable to generate reseller license." });
@@ -2064,9 +1940,7 @@ function escapeHtml(value) {
 async function startServer() {
     try {
         await seedFromJsonFiles();
-        seedDefaultPlugins().catch(error => console.error("PLUGIN SEED ERROR:", error));
-
-app.listen(PORT, () => {
+        app.listen(PORT, () => {
             console.log(`GMC Admin server running on port ${PORT}`);
         });
     } catch (error) {

@@ -1296,13 +1296,13 @@
             </div>
             <div class="bypass-confirm-kicker">RESELLER PRIVILEGE</div>
             <h3 id="bypassConfirmTitle">Generate License Without Payment?</h3>
-            <p class="bypass-confirm-text">Payment will be skipped for this reseller. A license will be generated immediately for the selected package.</p>
+            <p class="bypass-confirm-text">Payment will be skipped for this reseller. The selected license/account will be issued immediately from reseller stock.</p>
             <div class="bypass-confirm-info">
                 <div><span>Product</span><strong id="bypassConfirmProduct">—</strong></div>
                 <div><span>Package</span><strong id="bypassConfirmPackage">—</strong></div>
                 <div><span>Amount</span><strong id="bypassConfirmAmount">—</strong></div>
             </div>
-            <div class="bypass-confirm-warning"><span>i</span><div>This action does not charge the customer. For plugin-license products, a new random key is generated with the package validity and selected plugins.</div></div>
+            <div class="bypass-confirm-warning"><span>i</span><div>This action does not charge the customer. A stock item will be consumed if generation succeeds.</div></div>
             <div class="bypass-confirm-actions">
                 <button type="button" class="bypass-cancel" id="bypassConfirmCancel">CANCEL</button>
                 <button type="button" class="bypass-proceed" id="bypassConfirmProceed"><span>✓</span> GENERATE LICENSE</button>
@@ -1338,7 +1338,6 @@
 
         if (product.resellerShowBuy === true) {
             const hasPurchasablePlan = (Array.isArray(product.plans) ? product.plans : []).some(plan => {
-                if (product.pluginLicense === true && plan.pluginLicense === true) return Array.isArray(plan.pluginIds) && plan.pluginIds.length > 0;
                 const mode = plan.credentialMode || "license";
                 if (mode === "off") return false;
                 if (mode === "userpass") return Array.isArray(plan.accounts) && plan.accounts.length > 0;
@@ -1371,7 +1370,7 @@
             }
 
             container.innerHTML = products.map(product => {
-                const plans = (product.plans || []).map(plan => {const pluginMode=product.pluginLicense===true&&plan.pluginLicense===true;const mode=plan.credentialMode||"license",available=pluginMode?(Array.isArray(plan.pluginIds)?plan.pluginIds.length:0):(mode==="license"?(Array.isArray(plan.licenses)?plan.licenses.length:0):mode==="userpass"?(Array.isArray(plan.accounts)?plan.accounts.length:0):0);const displayPrice=plan.resellerPrice||plan.price;const original=plan.resellerPrice&&plan.resellerOriginalPrice&&plan.resellerOriginalPrice!==plan.resellerPrice?`<small style="text-decoration:line-through;color:#666;margin-right:5px">${escapeHtml(plan.resellerOriginalPrice)}</small>`:'';const availability=pluginMode?(available?`VALID ${Number(plan.validityDays||0)>0?Number(plan.validityDays)+" DAYS":"LIFETIME"}`:'NO PLUGINS'): (available?`${available} AVAILABLE`:'OUT OF STOCK');return `<div class="price-row"><span>${escapeHtml(plan.label)}</span><span>${original}<span class="price">${escapeHtml(displayPrice)}</span> <small style="color:${available?'#777':'#ff4444'};font-size:9px">${availability}</small></span></div>`;}).join("");
+                const plans = (product.plans || []).map(plan => {const mode=plan.credentialMode||"license",available=mode==="license"?(Array.isArray(plan.licenses)?plan.licenses.length:0):mode==="userpass"?(Array.isArray(plan.accounts)?plan.accounts.length:0):0;const displayPrice=plan.resellerPrice||plan.price;const original=plan.resellerPrice&&plan.resellerOriginalPrice&&plan.resellerOriginalPrice!==plan.resellerPrice?`<small style="text-decoration:line-through;color:#666;margin-right:5px">${escapeHtml(plan.resellerOriginalPrice)}</small>`:'';return `<div class="price-row"><span>${escapeHtml(plan.label)}</span><span>${original}<span class="price">${escapeHtml(displayPrice)}</span> <small style="color:${available?'#777':'#ff4444'};font-size:9px">${available?`${available} AVAILABLE`:'OUT OF STOCK'}</small></span></div>`;}).join("");
 
                 const imageProxy = product.imageUrl ? `/api/image-proxy?url=${encodeURIComponent(product.imageUrl)}` : "";
                 const imageMarkup = product.imageUrl
@@ -1709,7 +1708,7 @@
             buyQrPackage.textContent = data.planLabel || "—";
             buyQrEmail.textContent = data.customerEmail || buyCustomer.email || "—";
             buyQrAmount.textContent = `₹${Number(data.amount || 0).toLocaleString("en-IN")} · BYPASS`;
-            buyQrStatus.textContent = data.licenseKey ? `LICENSE: ${data.licenseKey}${data.pluginLicenseExpiresAt ? ` · EXPIRES: ${new Date(data.pluginLicenseExpiresAt).toLocaleDateString('en-IN')}` : ''}` : (data.account ? `ACCOUNT: ${data.account.username || "Issued"}` : "Credential generated successfully.");
+            buyQrStatus.textContent = data.licenseKey ? `LICENSE: ${data.licenseKey}` : (data.account ? `ACCOUNT: ${data.account.username || "Issued"}` : "Credential generated successfully.");
             buySuccess.hidden = false;
             const delivery = document.getElementById("buyEmailDeliveryStatus");
             if (delivery) delivery.textContent = data.emailStatus === "sent" ? "License details have been sent to the customer email." : "License generated. Email delivery is pending.";
@@ -1741,15 +1740,14 @@
             buyError2.textContent = "Selected package is not available.";
             return;
         }
-        const pluginMode = buyCurrentProduct.pluginLicense === true && selectedPlan.pluginLicense === true;
         const mode = selectedPlan.credentialMode || "license";
-        const available = pluginMode ? (Array.isArray(selectedPlan.pluginIds) ? selectedPlan.pluginIds.length : 0) : (mode === "license"
+        const available = mode === "license"
             ? (Array.isArray(selectedPlan.licenses) ? selectedPlan.licenses.length : 0)
             : mode === "userpass"
                 ? (Array.isArray(selectedPlan.accounts) ? selectedPlan.accounts.length : 0)
-                : 0);
+                : 0;
         if (mode !== "off" && available < 1) {
-            buyError2.textContent = pluginMode ? "No plugins are assigned to this package." : "This plan is currently out of stock.";
+            buyError2.textContent = "This plan is currently out of stock.";
             return;
         }
         buyError2.textContent = "";
